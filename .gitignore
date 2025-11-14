@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# WhatsApp session data (contains authentication tokens - DO NOT SHARE)
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Uploaded files
+uploads/
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+

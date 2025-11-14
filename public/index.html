@@ -1,0 +1,1316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp API Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            color: #25D366;
+            font-size: 28px;
+            margin-bottom: 8px;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            margin-top: 8px;
+        }
+
+        .status-badge.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-badge.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .card h2 {
+            font-size: 20px;
+            margin-bottom: 16px;
+            color: #333;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #555;
+        }
+
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.3s;
+        }
+
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #25D366;
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .btn {
+            background: #25D366;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.3s;
+            width: 100%;
+        }
+
+        .btn:hover {
+            background: #20ba5a;
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #667eea;
+        }
+
+        .btn-secondary:hover {
+            background: #5568d3;
+        }
+
+        .groups-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .group-item {
+            padding: 16px;
+            border-bottom: 1px solid #e0e0e0;
+            transition: background 0.2s;
+            position: relative;
+        }
+
+        .group-item:hover {
+            background: #f8f9fa;
+        }
+
+        .group-item:last-child {
+            border-bottom: none;
+        }
+
+        .group-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+        }
+
+        .group-name {
+            font-weight: 600;
+            font-size: 16px;
+            color: #333;
+            flex: 1;
+        }
+
+        .group-participants {
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .group-id-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 8px;
+        }
+
+        .group-id {
+            font-size: 13px;
+            color: #495057;
+            font-family: 'Courier New', monospace;
+            flex: 1;
+            word-break: break-all;
+            user-select: all;
+            cursor: text;
+        }
+
+        .copy-btn {
+            background: #25D366;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .copy-btn:hover {
+            background: #20ba5a;
+        }
+
+        .copy-btn:active {
+            background: #1da851;
+        }
+
+        .copy-btn.copied {
+            background: #28a745;
+        }
+
+        .group-search {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 16px;
+            font-family: inherit;
+        }
+
+        .group-search:focus {
+            outline: none;
+            border-color: #25D366;
+        }
+
+        .group-count {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 12px;
+        }
+
+        #fileInput {
+            cursor: pointer;
+        }
+
+        #fileInput:hover {
+            border-color: #25D366;
+        }
+
+        .file-preview {
+            margin-top: 8px;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            font-size: 12px;
+        }
+
+        .file-preview img {
+            max-width: 200px;
+            max-height: 200px;
+            border-radius: 4px;
+            margin-top: 8px;
+        }
+
+        .activity-log {
+            max-height: 400px;
+            overflow-y: auto;
+            font-size: 14px;
+        }
+
+        .log-item {
+            padding: 12px;
+            border-left: 3px solid #25D366;
+            margin-bottom: 12px;
+            background: #f9f9f9;
+            border-radius: 4px;
+        }
+
+        .log-item.error {
+            border-left-color: #dc3545;
+            background: #fff5f5;
+        }
+
+        .log-time {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 4px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+        }
+
+        .refresh-btn {
+            margin-bottom: 16px;
+        }
+
+        .qr-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .qr-modal.active {
+            display: flex;
+        }
+
+        .qr-content {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .qr-content h2 {
+            color: #25D366;
+            margin-bottom: 16px;
+            font-size: 24px;
+        }
+
+        .qr-code-container {
+            margin: 24px 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 300px;
+        }
+
+        .qr-code-container img {
+            max-width: 100%;
+            height: auto;
+            border: 4px solid #f0f0f0;
+            border-radius: 12px;
+            padding: 16px;
+            background: white;
+        }
+
+        .qr-instructions {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 24px;
+            text-align: left;
+        }
+
+        .qr-instructions ol {
+            margin: 12px 0;
+            padding-left: 20px;
+        }
+
+        .qr-instructions li {
+            margin: 8px 0;
+            color: #555;
+            line-height: 1.6;
+        }
+
+        .qr-loading {
+            color: #666;
+            font-size: 16px;
+        }
+
+        .close-qr-btn {
+            margin-top: 20px;
+            background: #667eea;
+        }
+
+        .close-qr-btn:hover {
+            background: #5568d3;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .btn-danger:disabled {
+            background: #ccc;
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            .header h1 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📱 WhatsApp API Dashboard</h1>
+            <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px;">
+            <div id="statusBadge" class="status-badge disconnected">
+                <span class="status-dot"></span>
+                <span>Checking connection...</span>
+                </div>
+                <button class="btn btn-secondary" onclick="showQRCodeModal()" style="width: auto; padding: 8px 16px; font-size: 14px;">
+                    📱 Show QR Code
+                </button>
+                <button id="logoutBtn" class="btn" onclick="logoutWhatsApp()" style="width: auto; padding: 8px 16px; font-size: 14px; background: #dc3545; display: none;">
+                    🚪 Logout
+                </button>
+            </div>
+            <div id="statusInfo" style="margin-top: 12px; font-size: 14px; color: #666;"></div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h2>Send Message</h2>
+                <div style="margin-bottom: 16px;">
+                    <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
+                        <input type="radio" name="messageType" value="group" checked onchange="switchMessageType('group')" style="cursor: pointer;">
+                        <span>📢 Group</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; margin-top: 8px;">
+                        <input type="radio" name="messageType" value="contact" onchange="switchMessageType('contact')" style="cursor: pointer;">
+                        <span>👤 Personal Contact</span>
+                    </label>
+                </div>
+                <form id="sendForm">
+                    <div class="form-group">
+                        <label id="recipientLabel" for="recipientId">Select Group</label>
+                        <select id="recipientId" required>
+                            <option value="">Loading groups...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="message">Message (Optional if sending file)</label>
+                        <textarea id="message" placeholder="Type your message here... (Optional if attaching a file)"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="fileInput">📎 Attach File (Images, PDFs, Documents)</label>
+                        <input type="file" id="fileInput" accept="image/*,application/pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx" style="width: 100%; padding: 8px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
+                        <div id="fileInfo" style="margin-top: 8px; font-size: 12px; color: #666;"></div>
+                        <button type="button" id="removeFileBtn" onclick="removeFile()" style="display: none; margin-top: 8px; padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Remove File</button>
+                    </div>
+                    <button type="submit" class="btn" id="sendBtn">Send Message</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <h2 style="margin: 0;" id="listTitle">Groups</h2>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-secondary" onclick="switchListView('groups')" id="groupsTabBtn" style="padding: 6px 12px; font-size: 14px;">📢 Groups</button>
+                        <button class="btn btn-secondary" onclick="switchListView('contacts')" id="contactsTabBtn" style="padding: 6px 12px; font-size: 14px;">👤 Contacts</button>
+                    </div>
+                </div>
+                <button class="btn btn-secondary refresh-btn" onclick="refreshCurrentList()">🔄 Refresh</button>
+                <input type="text" id="listSearch" class="group-search" placeholder="🔍 Search..." onkeyup="filterCurrentList()">
+                <div id="listCount" class="group-count"></div>
+                <div id="listContainer" class="groups-list">
+                    <div class="loading">Loading...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Activity Log</h2>
+            <div id="activityLog" class="activity-log">
+                <div class="empty-state">No activity yet</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- QR Code Modal -->
+    <div id="qrModal" class="qr-modal" onclick="if(event.target.id === 'qrModal') hideQRModal()">
+        <div class="qr-content" onclick="event.stopPropagation()">
+            <h2>📱 Scan QR Code</h2>
+            <div id="qrCodeContainer" class="qr-code-container">
+                <div class="qr-loading">Loading QR code...</div>
+            </div>
+            <div class="qr-instructions">
+                <strong>How to connect:</strong>
+                <ol>
+                    <li>Open WhatsApp on your phone</li>
+                    <li>Go to <strong>Settings</strong> → <strong>Linked devices</strong></li>
+                    <li>Tap <strong>Link a device</strong></li>
+                    <li>Scan the QR code shown above</li>
+                </ol>
+            </div>
+            <button class="btn close-qr-btn" onclick="hideQRModal()">Close</button>
+        </div>
+    </div>
+
+    <script>
+        let groups = [];
+        let contacts = [];
+        let currentView = 'groups'; // 'groups' or 'contacts'
+        let currentMessageType = 'group'; // 'group' or 'contact'
+
+        // Check status on load
+        async function checkStatus() {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+                
+                const badge = document.getElementById('statusBadge');
+                const info = document.getElementById('statusInfo');
+                
+                const logoutBtn = document.getElementById('logoutBtn');
+                
+                if (data.ready) {
+                    badge.className = 'status-badge connected';
+                    badge.innerHTML = '<span class="status-dot"></span><span>Connected</span>';
+                    if (data.info) {
+                        info.textContent = `Logged in as: ${data.info.pushname || data.info.wid}`;
+                    }
+                    logoutBtn.style.display = 'inline-block';
+                    hideQRModal();
+                } else {
+                    badge.className = 'status-badge disconnected';
+                    badge.innerHTML = '<span class="status-dot"></span><span>Disconnected</span>';
+                    info.textContent = 'Waiting for WhatsApp connection...';
+                    logoutBtn.style.display = 'none';
+                    // Check if QR code is available
+                    checkQRCode();
+                }
+            } catch (error) {
+                const badge = document.getElementById('statusBadge');
+                badge.className = 'status-badge disconnected';
+                badge.innerHTML = '<span class="status-dot"></span><span>Error</span>';
+                addLog('Error checking status: ' + error.message, 'error');
+            }
+        }
+
+        // Load contacts
+        async function loadContacts() {
+            const listContainer = document.getElementById('listContainer');
+            listContainer.innerHTML = '<div class="loading">Loading contacts...</div>';
+
+            try {
+                const response = await fetch('/list-contacts');
+                
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    throw new Error('Server returned non-JSON response. Client may be resetting.');
+                }
+                
+                const data = await response.json();
+                
+                if (data.ok && data.contacts) {
+                    contacts = data.contacts;
+                    
+                    if (contacts.length === 0) {
+                        listContainer.innerHTML = '<div class="empty-state">No contacts found</div>';
+                        document.getElementById('listCount').textContent = '';
+                    } else {
+                        renderContacts(contacts);
+                        updateListCount(contacts.length);
+                    }
+                } else {
+                    // Check for specific error types
+                    if (data.error) {
+                        if (data.error.includes('not ready')) {
+                            listContainer.innerHTML = '<div class="empty-state">WhatsApp client not ready yet. Please wait...</div>';
+                            document.getElementById('listCount').textContent = '';
+                            addLog('Waiting for WhatsApp connection...', 'error');
+                            // Retry after a delay
+                            setTimeout(() => {
+                                if (currentView === 'contacts') {
+                                    loadContacts();
+                                }
+                            }, 3000);
+                        } else if (data.error.includes('reset') || data.error.includes('being reset')) {
+                            listContainer.innerHTML = '<div class="empty-state">Client is being reset. Please wait...</div>';
+                            document.getElementById('listCount').textContent = '';
+                            addLog(data.error, 'error');
+                            // Check status to see if we should retry
+                            setTimeout(async () => {
+                                try {
+                                    const statusRes = await fetch('/status');
+                                    const statusData = await statusRes.json();
+                                    if (statusData.ready && currentView === 'contacts' && !statusData.isLoggingOut) {
+                                        loadContacts();
+                                    }
+                                } catch (e) {
+                                    console.error('Error checking status:', e);
+                                }
+                            }, 5000);
+                        } else {
+                            throw new Error(data.error);
+                        }
+                    } else {
+                        throw new Error('Failed to load contacts');
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading contacts:', error);
+                if (error.message && (error.message.includes('Session closed') || error.message.includes('reset') || error.message.includes('Protocol error'))) {
+                    listContainer.innerHTML = '<div class="empty-state">WhatsApp session error. Please refresh the page or reconnect.</div>';
+                    document.getElementById('listCount').textContent = '';
+                    addLog('Session error. Try refreshing the page.', 'error');
+                } else if (error.message && error.message.includes('not ready')) {
+                    listContainer.innerHTML = '<div class="empty-state">WhatsApp client not ready yet. Please wait...</div>';
+                    document.getElementById('listCount').textContent = '';
+                    addLog('Waiting for WhatsApp connection...', 'error');
+                } else {
+                    listContainer.innerHTML = '<div class="empty-state">Error loading contacts</div>';
+                    document.getElementById('listCount').textContent = '';
+                    addLog('Error loading contacts: ' + error.message, 'error');
+                }
+            }
+        }
+
+        // Load groups
+        async function loadGroups() {
+            const listContainer = document.getElementById('listContainer');
+            listContainer.innerHTML = '<div class="loading">Loading groups...</div>';
+
+            try {
+                const response = await fetch('/list-groups');
+                
+                // Check if response is JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    throw new Error('Server returned non-JSON response. Client may be resetting.');
+                }
+                
+                const data = await response.json();
+                
+                if (data.ok && data.groups) {
+                    groups = data.groups;
+
+                    // Populate list
+                    if (groups.length === 0) {
+                        listContainer.innerHTML = '<div class="empty-state">No groups found</div>';
+                        document.getElementById('listCount').textContent = '';
+                    } else {
+                        renderGroups(groups);
+                        updateListCount(groups.length);
+                    }
+                } else {
+                    // Check for specific error types
+                    if (data.error) {
+                        if (data.error.includes('not ready')) {
+                            listContainer.innerHTML = '<div class="empty-state">WhatsApp client not ready yet. Please wait...</div>';
+                            document.getElementById('listCount').textContent = '';
+                            addLog('Waiting for WhatsApp connection...', 'error');
+                            // Retry after a delay
+                            setTimeout(() => {
+                                if (currentView === 'groups') {
+                                    loadGroups();
+                                }
+                            }, 3000);
+                        } else if (data.error.includes('reset')) {
+                            listContainer.innerHTML = '<div class="empty-state">Client is being reset. Please wait...</div>';
+                            document.getElementById('listCount').textContent = '';
+                            addLog(data.error, 'error');
+                        } else {
+                            throw new Error(data.error);
+                        }
+                    } else {
+                        throw new Error('Failed to load groups');
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading groups:', error);
+                if (error.message && (error.message.includes('Session closed') || error.message.includes('reset'))) {
+                    listContainer.innerHTML = '<div class="empty-state">Client is being reset. Please wait and refresh...</div>';
+                    document.getElementById('listCount').textContent = '';
+                    addLog('Client session is being reset. Please wait...', 'error');
+                } else if (error.message && error.message.includes('not ready')) {
+                    listContainer.innerHTML = '<div class="empty-state">WhatsApp client not ready yet. Please wait...</div>';
+                    document.getElementById('listCount').textContent = '';
+                    addLog('Waiting for WhatsApp connection...', 'error');
+                } else {
+                    listContainer.innerHTML = '<div class="empty-state">Error loading groups</div>';
+                    document.getElementById('listCount').textContent = '';
+                    addLog('Error loading groups: ' + error.message, 'error');
+                }
+            }
+        }
+
+        function selectGroup(groupId) {
+            document.getElementById('recipientId').value = groupId;
+            // Switch to group mode if not already
+            if (currentMessageType !== 'group') {
+                document.querySelector('input[name="messageType"][value="group"]').checked = true;
+                switchMessageType('group');
+            }
+        }
+
+        function selectContact(contactId) {
+            document.getElementById('recipientId').value = contactId;
+            // Switch to contact mode if not already
+            if (currentMessageType !== 'contact') {
+                document.querySelector('input[name="messageType"][value="contact"]').checked = true;
+                switchMessageType('contact');
+            }
+        }
+
+        // Copy group ID to clipboard
+        async function copyGroupId(groupId, button) {
+            try {
+                await navigator.clipboard.writeText(groupId);
+                
+                // Visual feedback
+                const originalText = button.textContent;
+                button.textContent = '✓ Copied!';
+                button.classList.add('copied');
+                
+                // Show in activity log
+                addLog(`Group ID copied: ${groupId.substring(0, 20)}...`, 'success');
+                
+                // Reset button after 2 seconds
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.classList.remove('copied');
+                }, 2000);
+            } catch (err) {
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = groupId;
+                textArea.style.position = 'fixed';
+                textArea.style.opacity = '0';
+                document.body.appendChild(textArea);
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    button.textContent = '✓ Copied!';
+                    button.classList.add('copied');
+                    setTimeout(() => {
+                        button.textContent = '📋 Copy';
+                        button.classList.remove('copied');
+                    }, 2000);
+                } catch (fallbackErr) {
+                    addLog('Failed to copy group ID', 'error');
+                }
+                document.body.removeChild(textArea);
+            }
+        }
+
+        // Render groups list
+        function renderGroups(groupsToRender) {
+            const listContainer = document.getElementById('listContainer');
+            listContainer.innerHTML = groupsToRender.map(group => `
+                <div class="group-item">
+                    <div class="group-header">
+                        <div class="group-name" onclick="selectGroup('${group.id}')" style="cursor: pointer;">${escapeHtml(group.name)}</div>
+                    </div>
+                    <div class="group-participants">👥 ${group.participants || 0} participants</div>
+                    <div class="group-id-container">
+                        <div class="group-id" onclick="this.select(); copyGroupId('${group.id}', this.nextElementSibling);" title="Click to select, or use Copy button">${group.id}</div>
+                        <button class="copy-btn" onclick="copyGroupId('${group.id}', this); event.stopPropagation();">📋 Copy</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Render contacts list
+        function renderContacts(contactsToRender) {
+            const listContainer = document.getElementById('listContainer');
+            listContainer.innerHTML = contactsToRender.map(contact => `
+                <div class="group-item">
+                    <div class="group-header">
+                        <div class="group-name" onclick="selectContact('${contact.id}')" style="cursor: pointer;">${escapeHtml(contact.name)}</div>
+                    </div>
+                    ${contact.number ? `<div class="group-participants">📱 ${contact.number}</div>` : ''}
+                    <div class="group-id-container">
+                        <div class="group-id" onclick="this.select(); copyGroupId('${contact.id}', this.nextElementSibling);" title="Click to select, or use Copy button">${contact.id}</div>
+                        <button class="copy-btn" onclick="copyGroupId('${contact.id}', this); event.stopPropagation();">📋 Copy</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Switch list view (groups/contacts)
+        function switchListView(view) {
+            currentView = view;
+            const listSearch = document.getElementById('listSearch');
+            const listTitle = document.getElementById('listTitle');
+            const groupsTabBtn = document.getElementById('groupsTabBtn');
+            const contactsTabBtn = document.getElementById('contactsTabBtn');
+            
+            // Update UI
+            if (view === 'groups') {
+                listTitle.textContent = 'Groups';
+                listSearch.placeholder = '🔍 Search groups by name...';
+                groupsTabBtn.style.background = '#25D366';
+                groupsTabBtn.style.color = 'white';
+                contactsTabBtn.style.background = '#667eea';
+                contactsTabBtn.style.color = 'white';
+                loadGroups();
+            } else {
+                listTitle.textContent = 'Contacts';
+                listSearch.placeholder = '🔍 Search contacts by name...';
+                contactsTabBtn.style.background = '#25D366';
+                contactsTabBtn.style.color = 'white';
+                groupsTabBtn.style.background = '#667eea';
+                groupsTabBtn.style.color = 'white';
+                loadContacts();
+            }
+            
+            listSearch.value = '';
+        }
+
+        // Refresh current list
+        function refreshCurrentList() {
+            if (currentView === 'groups') {
+                loadGroups();
+            } else {
+                loadContacts();
+            }
+        }
+
+        // Filter current list
+        function filterCurrentList() {
+            const searchTerm = document.getElementById('listSearch').value.toLowerCase();
+            
+            if (currentView === 'groups') {
+                if (!searchTerm) {
+                    renderGroups(groups);
+                    updateListCount(groups.length);
+                    return;
+                }
+                const filtered = groups.filter(group => 
+                    group.name.toLowerCase().includes(searchTerm) || 
+                    group.id.toLowerCase().includes(searchTerm)
+                );
+                renderGroups(filtered);
+                updateListCount(filtered.length, groups.length);
+            } else {
+                if (!searchTerm) {
+                    renderContacts(contacts);
+                    updateListCount(contacts.length);
+                    return;
+                }
+                const filtered = contacts.filter(contact => 
+                    contact.name.toLowerCase().includes(searchTerm) || 
+                    (contact.number && contact.number.includes(searchTerm)) ||
+                    contact.id.toLowerCase().includes(searchTerm)
+                );
+                renderContacts(filtered);
+                updateListCount(filtered.length, contacts.length);
+            }
+        }
+
+        // Update list count display
+        function updateListCount(count, total = null) {
+            const countEl = document.getElementById('listCount');
+            const type = currentView === 'groups' ? 'group' : 'contact';
+            if (total !== null && total !== count) {
+                countEl.textContent = `Showing ${count} of ${total} ${type}${total !== 1 ? 's' : ''}`;
+            } else {
+                countEl.textContent = count === 1 ? `1 ${type}` : `${count} ${type}${count !== 1 ? 's' : ''}`;
+            }
+        }
+
+        // Switch message type (group/contact)
+        function switchMessageType(type) {
+            currentMessageType = type;
+            const recipientSelect = document.getElementById('recipientId');
+            const recipientLabel = document.getElementById('recipientLabel');
+            
+            if (type === 'group') {
+                recipientLabel.textContent = 'Select Group';
+                recipientSelect.innerHTML = '<option value="">Loading groups...</option>';
+                loadGroupsForSelect();
+            } else {
+                recipientLabel.textContent = 'Select Contact';
+                recipientSelect.innerHTML = '<option value="">Loading contacts...</option>';
+                loadContactsForSelect();
+            }
+        }
+
+        // Load groups for select dropdown
+        async function loadGroupsForSelect() {
+            const recipientSelect = document.getElementById('recipientId');
+            try {
+                const response = await fetch('/list-groups');
+                const data = await response.json();
+                
+                if (data.ok && data.groups) {
+                    recipientSelect.innerHTML = '<option value="">Select a group...</option>';
+                    data.groups.forEach(group => {
+                        const option = document.createElement('option');
+                        option.value = group.id;
+                        option.textContent = `${group.name} (${group.participants || 0} members)`;
+                        recipientSelect.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                recipientSelect.innerHTML = '<option value="">Error loading groups</option>';
+            }
+        }
+
+        // Load contacts for select dropdown
+        async function loadContactsForSelect() {
+            const recipientSelect = document.getElementById('recipientId');
+            try {
+                const response = await fetch('/list-contacts');
+                const data = await response.json();
+                
+                if (data.ok && data.contacts) {
+                    recipientSelect.innerHTML = '<option value="">Select a contact...</option>';
+                    data.contacts.forEach(contact => {
+                        const option = document.createElement('option');
+                        option.value = contact.id;
+                        option.textContent = `${contact.name}${contact.number ? ' (' + contact.number + ')' : ''}`;
+                        recipientSelect.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                recipientSelect.innerHTML = '<option value="">Error loading contacts</option>';
+            }
+        }
+
+        // File input change handler
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const fileInfo = document.getElementById('fileInfo');
+            const removeBtn = document.getElementById('removeFileBtn');
+            
+            if (file) {
+                const fileSize = (file.size / 1024 / 1024).toFixed(2); // MB
+                fileInfo.innerHTML = `
+                    <div class="file-preview">
+                        <strong>Selected:</strong> ${escapeHtml(file.name)}<br>
+                        <strong>Size:</strong> ${fileSize} MB<br>
+                        <strong>Type:</strong> ${file.type || 'Unknown'}
+                        ${file.type && file.type.startsWith('image/') ? `<br><img src="${URL.createObjectURL(file)}" alt="Preview">` : ''}
+                    </div>
+                `;
+                removeBtn.style.display = 'inline-block';
+            } else {
+                fileInfo.innerHTML = '';
+                removeBtn.style.display = 'none';
+            }
+        });
+
+        // Remove file
+        function removeFile() {
+            document.getElementById('fileInput').value = '';
+            document.getElementById('fileInfo').innerHTML = '';
+            document.getElementById('removeFileBtn').style.display = 'none';
+        }
+
+        // Send message
+        document.getElementById('sendForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const recipientId = document.getElementById('recipientId').value;
+            const message = document.getElementById('message').value;
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            const sendBtn = document.getElementById('sendBtn');
+            
+            if (!recipientId) {
+                addLog(`Please select a ${currentMessageType === 'group' ? 'group' : 'contact'}`, 'error');
+                return;
+            }
+
+            if (!message && !file) {
+                addLog('Please enter a message or attach a file', 'error');
+                return;
+            }
+
+            sendBtn.disabled = true;
+            sendBtn.textContent = file ? 'Sending file...' : 'Sending...';
+            
+            // Show immediate feedback
+            const typeName = currentMessageType === 'group' ? 'group' : 'contact';
+            addLog(`Sending message to ${typeName}...`, 'info');
+
+            try {
+                const endpoint = currentMessageType === 'group' ? '/send-group' : '/send-contact';
+                const idField = currentMessageType === 'group' ? 'groupId' : 'contactId';
+                
+                let response;
+                const startTime = Date.now();
+                
+                if (file) {
+                    // Send with file using FormData
+                    const formData = new FormData();
+                    formData.append(idField, recipientId);
+                    if (message) {
+                        formData.append('message', message);
+                    }
+                    formData.append('file', file);
+                    
+                    response = await fetch(endpoint, {
+                        method: 'POST',
+                        body: formData
+                    });
+                } else {
+                    // Send text only
+                    response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ [idField]: recipientId, message })
+                    });
+                }
+
+                const data = await response.json();
+                const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+                if (data.ok) {
+                    const typeName = currentMessageType === 'group' ? 'group' : 'contact';
+                    const recipientName = currentMessageType === 'group' ? data.groupName : data.contactName;
+                    const mediaText = data.hasMedia ? ' with file' : '';
+                    addLog(`✓ Message${mediaText} sent successfully! (${duration}s)`, 'success');
+                    document.getElementById('message').value = '';
+                    removeFile();
+                    addLog(`Recipient: ${escapeHtml(recipientName)}`, 'info');
+                } else {
+                    throw new Error(data.error || 'Failed to send message');
+                }
+            } catch (error) {
+                addLog('Error sending message: ' + error.message, 'error');
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'Send Message';
+            }
+        });
+
+        // Activity log
+        function addLog(message, type = 'success') {
+            const log = document.getElementById('activityLog');
+            const emptyState = log.querySelector('.empty-state');
+            if (emptyState) {
+                emptyState.remove();
+            }
+
+            const logItem = document.createElement('div');
+            logItem.className = `log-item ${type === 'error' ? 'error' : ''}`;
+            logItem.innerHTML = `
+                <div class="log-time">${new Date().toLocaleTimeString()}</div>
+                <div>${escapeHtml(message)}</div>
+            `;
+            log.insertBefore(logItem, log.firstChild);
+
+            // Keep only last 50 logs
+            while (log.children.length > 50) {
+                log.removeChild(log.lastChild);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // QR Code Modal Functions
+        function showQRModal(qrDataUrl) {
+            const modal = document.getElementById('qrModal');
+            const qrContainer = document.getElementById('qrCodeContainer');
+            
+            if (qrDataUrl) {
+                qrContainer.innerHTML = `<img src="${qrDataUrl}" alt="WhatsApp QR Code">`;
+            } else {
+                qrContainer.innerHTML = '<div class="qr-loading">Generating QR code...</div>';
+            }
+            
+            modal.classList.add('active');
+        }
+
+        function hideQRModal() {
+            const modal = document.getElementById('qrModal');
+            modal.classList.remove('active');
+        }
+
+        // Check for QR code
+        async function checkQRCode() {
+            try {
+                const response = await fetch('/api/qr');
+                const data = await response.json();
+                
+                if (data.hasQR && data.qr && !data.ready) {
+                    showQRModal(data.qr);
+                } else if (data.ready) {
+                    hideQRModal();
+                }
+            } catch (error) {
+                console.error('Error checking QR code:', error);
+            }
+        }
+
+        // Show QR code modal (fetch QR code first)
+        async function showQRCodeModal() {
+            showQRModal(); // Show modal with loading state
+            try {
+                const response = await fetch('/api/qr');
+                const data = await response.json();
+                
+                if (data.hasQR && data.qr) {
+                    showQRModal(data.qr);
+                } else if (data.ready) {
+                    const qrContainer = document.getElementById('qrCodeContainer');
+                    qrContainer.innerHTML = '<div class="qr-loading">✅ Already connected! No QR code needed.</div>';
+                } else {
+                    const qrContainer = document.getElementById('qrCodeContainer');
+                    qrContainer.innerHTML = '<div class="qr-loading">QR code not available yet. Please wait...</div>';
+                }
+            } catch (error) {
+                console.error('Error fetching QR code:', error);
+                const qrContainer = document.getElementById('qrCodeContainer');
+                qrContainer.innerHTML = '<div class="qr-loading" style="color: #dc3545;">Error loading QR code. Please try again.</div>';
+            }
+        }
+
+        // Connect to QR code stream for real-time updates
+        let eventSource = null;
+        function connectQRStream() {
+            // Close existing connection if any
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            eventSource = new EventSource('/api/qr-stream');
+            
+            eventSource.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.loggedOut) {
+                        addLog('Logged out successfully. Please scan a new QR code.', 'success');
+                        checkStatus();
+                    }
+                    
+                    if (data.connected) {
+                        hideQRModal();
+                        checkStatus(); // Update status badge
+                    } else if (data.hasQR && data.qr) {
+                        showQRModal(data.qr);
+                    } else if (!data.hasQR && !data.connected && !data.loggedOut) {
+                        // Show modal with loading state
+                        const qrContainer = document.getElementById('qrCodeContainer');
+                        qrContainer.innerHTML = '<div class="qr-loading">Waiting for QR code...</div>';
+                        showQRModal();
+                    }
+                } catch (error) {
+                    console.error('Error parsing QR stream data:', error);
+                }
+            };
+            
+            eventSource.onerror = (error) => {
+                console.error('QR stream error:', error);
+                // Try to reconnect after a delay
+                setTimeout(() => {
+                    if (eventSource && eventSource.readyState === EventSource.CLOSED) {
+                        connectQRStream();
+                    }
+                }, 3000);
+            };
+        }
+
+        // Logout WhatsApp
+        async function logoutWhatsApp() {
+            const logoutBtn = document.getElementById('logoutBtn');
+            const originalText = logoutBtn.textContent;
+            
+            if (!confirm('Are you sure you want to logout? You will need to scan a new QR code to connect again.')) {
+                return;
+            }
+            
+            logoutBtn.disabled = true;
+            logoutBtn.textContent = 'Logging out...';
+            
+            try {
+                const response = await fetch('/api/logout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                // Check if response is JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    throw new Error('Server returned non-JSON response. Please check server logs.');
+                }
+                
+                const data = await response.json();
+                
+                if (data.ok) {
+                    addLog('Logging out... Please wait for new QR code.', 'success');
+                    logoutBtn.style.display = 'none';
+                    // Disable groups loading temporarily
+                    setTimeout(() => {
+                        checkStatus();
+                        // Wait a bit for new QR code
+                        setTimeout(() => {
+                            checkQRCode();
+                        }, 2000);
+                    }, 1000);
+                } else {
+                    throw new Error(data.error || 'Failed to logout');
+                }
+            } catch (error) {
+                console.error('Logout error:', error);
+                addLog('Error logging out: ' + error.message, 'error');
+                logoutBtn.disabled = false;
+                logoutBtn.textContent = originalText;
+            }
+        }
+
+        // Close modal on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                hideQRModal();
+            }
+        });
+
+        // Debounce function to prevent too many rapid calls
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        // Optimized status check - only when needed
+        let lastStatusCheck = 0;
+        const STATUS_CHECK_INTERVAL = 5000; // 5 seconds minimum between checks
+        
+        async function checkStatusOptimized() {
+            const now = Date.now();
+            if (now - lastStatusCheck < STATUS_CHECK_INTERVAL) {
+                return;
+            }
+            lastStatusCheck = now;
+            await checkStatus();
+        }
+
+        // Initialize
+        checkStatus();
+        loadGroups(); // Load groups by default
+        loadGroupsForSelect(); // Load groups for send form
+        connectQRStream();
+        
+        // Set initial tab button style
+        document.getElementById('groupsTabBtn').style.background = '#25D366';
+        document.getElementById('groupsTabBtn').style.color = 'white';
+        
+        // Refresh status every 10 seconds (with debouncing)
+        setInterval(checkStatusOptimized, 10000);
+        
+        // Refresh groups every 30 seconds (only if connected)
+        let isConnected = false;
+        setInterval(() => {
+            // Check status badge to determine if connected
+            const badge = document.getElementById('statusBadge');
+            if (badge && badge.classList.contains('connected')) {
+                if (!isConnected) {
+                    isConnected = true;
+                    loadGroups(); // Load immediately when connected
+                } else {
+                    loadGroups(); // Refresh periodically
+                }
+            } else {
+                isConnected = false;
+            }
+        }, 30000);
+    </script>
+</body>
+</html>
+
