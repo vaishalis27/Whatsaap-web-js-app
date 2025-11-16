@@ -15,10 +15,14 @@ This Node.js server provides an HTTP API to send messages to WhatsApp groups usi
 
 - ✅ **Web Dashboard** - Beautiful, responsive web interface for managing WhatsApp messages
 - ✅ List all groups and their IDs
-- ✅ Send messages to groups via HTTP API or dashboard
+- ✅ Send messages to groups and personal contacts via HTTP API or dashboard
 - ✅ Session persistence (no re-scan after initial QR)
 - ✅ Health check and status endpoints
 - ✅ Real-time activity logging
+- ✅ **Anti-Detection System** - Prevents WhatsApp from detecting automation and logging you out
+- ✅ **File Upload Support** - Send images, PDFs, documents, videos, and audio files
+- ✅ **Message Queue** - Automatic queuing with human-like delays
+- ✅ **Security Features** - Rate limiting, input validation, file type restrictions
 
 ## Installation
 
@@ -54,58 +58,39 @@ The dashboard provides:
 
 The dashboard is fully responsive and works on desktop, tablet, and mobile devices.
 
-## API Endpoints
+## API Documentation
 
-### Health Check
+📖 **Complete API Documentation**: See [API_DOCUMENTATION.md](./API_DOCUMENTATION.md) for detailed API reference with examples in multiple languages.
+
+### Quick API Reference
+
+**Base URL:** `http://localhost:3000`
+
+**Available Endpoints:**
+- `GET /api/health` - Health check
+- `GET /status` - Get WhatsApp connection status and queue info
+- `GET /list-groups` - List all groups
+- `GET /list-contacts` - List all personal contacts
+- `POST /send-group` - Send message/file to group
+- `POST /send-contact` - Send message/file to contact
+- `POST /api/reset-list` - Force refresh groups/contacts list
+- `GET /api/qr` - Get QR code (base64)
+- `GET /api/qr-stream` - Get QR code (SSE stream)
+- `POST /api/logout` - Logout and clear session
+
+### Quick Example
+
 ```bash
-GET http://localhost:3000/api/health
+# Send a message to a group
+curl -X POST http://localhost:3000/send-group \
+  -H "Content-Type: application/json" \
+  -d '{
+    "groupId": "120363123456789012@g.us",
+    "message": "Hello from API!"
+  }'
 ```
 
-### List Groups
-```bash
-GET http://localhost:3000/list-groups
-```
-
-Response:
-```json
-{
-  "ok": true,
-  "groups": [
-    {
-      "id": "123456789-123456789@g.us",
-      "name": "My Group",
-      "participants": 10
-    }
-  ],
-  "count": 1
-}
-```
-
-### Send Message to Group
-```bash
-POST http://localhost:3000/send-group
-Content-Type: application/json
-
-{
-  "groupId": "123456789-123456789@g.us",
-  "message": "Hello group!"
-}
-```
-
-Response:
-```json
-{
-  "ok": true,
-  "id": "3EB0...",
-  "timestamp": 1234567890,
-  "groupName": "My Group"
-}
-```
-
-### Get Status
-```bash
-GET http://localhost:3000/status
-```
+For complete documentation with examples in Python, Node.js, PHP, and more, see [API_DOCUMENTATION.md](./API_DOCUMENTATION.md).
 
 ## Finding Group IDs
 
@@ -200,6 +185,84 @@ If you need reliability:
 ### Session Lost
 - Delete `.wwebjs_auth/` folder and re-scan QR code
 - WhatsApp may log you out if suspicious activity is detected
+
+## Anti-Detection System
+
+This app includes an **anti-detection system** to reduce the risk of WhatsApp detecting automation and logging you out. The system includes:
+
+### Features
+
+1. **Human-like Delays** - Random delays between messages (2-5 seconds by default)
+2. **Message Queue** - Messages are queued and sent with proper spacing
+3. **Pattern Detection** - Detects and prevents suspicious patterns (identical messages, rapid sending)
+4. **Cooldown Periods** - Automatic cooldown after sending multiple messages
+5. **Media Delays** - Extra delays for media files (they take longer to process)
+
+### Configuration
+
+You can customize anti-detection settings via environment variables:
+
+```bash
+# Minimum delay between messages (milliseconds)
+MIN_MESSAGE_DELAY=2000
+
+# Maximum delay between messages (milliseconds)
+MAX_MESSAGE_DELAY=5000
+
+# Cooldown period after multiple messages (milliseconds)
+COOLDOWN_PERIOD=30000
+
+# Maximum messages before cooldown
+MAX_MESSAGES_BEFORE_COOLDOWN=5
+
+# Media delay multiplier (media files get extra delay)
+MEDIA_DELAY_MULTIPLIER=1.5
+```
+
+### How It Works
+
+- Messages are automatically queued when you send them
+- The system adds random delays between messages to simulate human behavior
+- After sending 5 messages, a 30-second cooldown is automatically applied
+- If suspicious patterns are detected (same message sent 3+ times, or 3+ messages to same recipient in 10 seconds), extra delays are added
+- The queue position and status are shown in the API response
+
+### Best Practices
+
+1. **Don't send too many messages at once** - Even with anti-detection, sending 100+ messages quickly is risky
+2. **Vary your messages** - Don't send identical messages repeatedly
+3. **Use reasonable delays** - The default settings are conservative; don't reduce them too much
+4. **Monitor the queue** - Check the `/status` endpoint to see queue status
+5. **Respect rate limits** - The system limits to 10 messages per minute per IP
+
+### Checking Queue Status
+
+You can check the anti-detection system status via the `/status` endpoint:
+
+```bash
+curl http://localhost:3000/status
+```
+
+Response includes:
+```json
+{
+  "ok": true,
+  "ready": true,
+  "antiDetection": {
+    "queueLength": 2,
+    "isProcessing": true,
+    "messageCountInWindow": 3,
+    "cooldownUntil": null,
+    "config": {
+      "minDelay": 2000,
+      "maxDelay": 5000,
+      "cooldownPeriod": 30000,
+      "maxMessagesBeforeCooldown": 5,
+      "mediaDelayMultiplier": 1.5
+    }
+  }
+}
+```
 
 ## License
 

@@ -333,14 +333,17 @@
             right: 0;
             bottom: 0;
             background: rgba(0, 0, 0, 0.8);
-            z-index: 1000;
+            z-index: 10000;
             align-items: center;
             justify-content: center;
             padding: 20px;
+            opacity: 0;
+            transition: opacity 0.3s ease;
         }
 
         .qr-modal.active {
             display: flex;
+            opacity: 1;
         }
 
         .qr-content {
@@ -409,6 +412,16 @@
             background: #5568d3;
         }
 
+        #resetBtn:hover {
+            background: #ee5a5a !important;
+        }
+
+        #resetBtn:disabled {
+            background: #ccc !important;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
         .btn-danger {
             background: #dc3545;
         }
@@ -441,7 +454,7 @@
                 <span class="status-dot"></span>
                 <span>Checking connection...</span>
                 </div>
-                <button class="btn btn-secondary" onclick="showQRCodeModal()" style="width: auto; padding: 8px 16px; font-size: 14px;">
+                <button class="btn btn-secondary" onclick="showQRCodeModal(); return false;" style="width: auto; padding: 8px 16px; font-size: 14px;">
                     📱 Show QR Code
                 </button>
                 <button id="logoutBtn" class="btn" onclick="logoutWhatsApp()" style="width: auto; padding: 8px 16px; font-size: 14px; background: #dc3545; display: none;">
@@ -493,7 +506,10 @@
                         <button class="btn btn-secondary" onclick="switchListView('contacts')" id="contactsTabBtn" style="padding: 6px 12px; font-size: 14px;">👤 Contacts</button>
                     </div>
                 </div>
-                <button class="btn btn-secondary refresh-btn" onclick="refreshCurrentList()">🔄 Refresh</button>
+                <div style="display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;">
+                    <button class="btn btn-secondary refresh-btn" onclick="refreshCurrentList()" title="Quick refresh of current list">🔄 Refresh</button>
+                    <button class="btn btn-secondary" onclick="resetList()" id="resetBtn" style="background: #ff6b6b; color: white; font-weight: bold;" title="Force refresh from WhatsApp and remove invalid groups/contacts">🔄 Reset & Validate</button>
+                </div>
                 <input type="text" id="listSearch" class="group-search" placeholder="🔍 Search..." onkeyup="filterCurrentList()">
                 <div id="listCount" class="group-count"></div>
                 <div id="listContainer" class="groups-list">
@@ -511,7 +527,7 @@
     </div>
 
     <!-- QR Code Modal -->
-    <div id="qrModal" class="qr-modal" onclick="if(event.target.id === 'qrModal') hideQRModal()">
+    <div id="qrModal" class="qr-modal">
         <div class="qr-content" onclick="event.stopPropagation()">
             <h2>📱 Scan QR Code</h2>
             <div id="qrCodeContainer" class="qr-code-container">
@@ -526,7 +542,7 @@
                     <li>Scan the QR code shown above</li>
                 </ol>
             </div>
-            <button class="btn close-qr-btn" onclick="hideQRModal()">Close</button>
+            <button class="btn close-qr-btn" id="closeQRBtn" onclick="hideQRModal(); return false;">Close</button>
         </div>
     </div>
 
@@ -575,6 +591,7 @@
         async function loadContacts() {
             const listContainer = document.getElementById('listContainer');
             listContainer.innerHTML = '<div class="loading">Loading contacts...</div>';
+            console.log('Loading contacts for list view...');
 
             try {
                 const response = await fetch('/list-contacts');
@@ -586,16 +603,39 @@
                 }
                 
                 const data = await response.json();
+                console.log('Contacts list response:', { ok: data.ok, count: data.count, hasContacts: !!data.contacts, contactsLength: data.contacts?.length });
                 
                 if (data.ok && data.contacts) {
                     contacts = data.contacts;
                     
                     if (contacts.length === 0) {
-                        listContainer.innerHTML = '<div class="empty-state">No contacts found</div>';
+                        console.warn('No contacts found in list');
+                        listContainer.innerHTML = `
+                            <div class="empty-state">
+                                <h3 style="margin-bottom: 12px;">No contacts found</h3>
+                                <p style="color: #666; margin-bottom: 16px;">
+                                    WhatsApp Web.js only shows contacts you have an <strong>active chat</strong> with.
+                                </p>
+                                <div style="background: #f0f0f0; padding: 12px; border-radius: 8px; margin-top: 12px;">
+                                    <strong>To see contacts here:</strong>
+                                    <ol style="margin: 8px 0 0 20px; text-align: left;">
+                                        <li>Open WhatsApp Web in your browser</li>
+                                        <li>Start a conversation with someone (send at least one message)</li>
+                                        <li>Click "Reset & Validate" button above to refresh the list</li>
+                                    </ol>
+                                </div>
+                                <button onclick="loadContacts()" style="margin-top: 16px; padding: 8px 16px; background: #25D366; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                                    🔄 Retry Loading Contacts
+                                </button>
+                            </div>
+                        `;
                         document.getElementById('listCount').textContent = '';
+                        addLog('No personal contacts found. You need to have active chats with contacts.', 'info');
                     } else {
+                        console.log(`Rendering ${contacts.length} contacts`);
                         renderContacts(contacts);
                         updateListCount(contacts.length);
+                        addLog(`Loaded ${contacts.length} contact(s)`, 'success');
                     }
                 } else {
                     // Check for specific error types
@@ -626,6 +666,18 @@
                                     console.error('Error checking status:', e);
                                 }
                             }, 5000);
+                        } else if (data.error.includes('Reconnecting') || data.reconnecting) {
+                            listContainer.innerHTML = '<div class="empty-state">Session closed. Reconnecting automatically... Please wait a moment and try again.</div>';
+                            document.getElementById('listCount').textContent = '';
+                            addLog('Session closed. Reconnecting automatically...', 'info');
+                            // Retry after a longer delay when reconnecting
+                            setTimeout(() => {
+                                if (currentView === 'contacts') {
+                                    loadContacts();
+                                } else {
+                                    loadGroups();
+                                }
+                            }, 10000); // Wait 10 seconds for reconnection
                         } else {
                             throw new Error(data.error);
                         }
@@ -670,7 +722,7 @@
                 
                 if (data.ok && data.groups) {
                     groups = data.groups;
-
+                    
                     // Populate list
                     if (groups.length === 0) {
                         listContainer.innerHTML = '<div class="empty-state">No groups found</div>';
@@ -692,10 +744,18 @@
                                     loadGroups();
                                 }
                             }, 3000);
-                        } else if (data.error.includes('reset')) {
+                        } else if (data.error.includes('reset') || data.error.includes('being reset')) {
                             listContainer.innerHTML = '<div class="empty-state">Client is being reset. Please wait...</div>';
                             document.getElementById('listCount').textContent = '';
                             addLog(data.error, 'error');
+                        } else if (data.error.includes('Reconnecting') || data.reconnecting) {
+                            listContainer.innerHTML = '<div class="empty-state">Session closed. Reconnecting automatically... Please wait a moment and try again.</div>';
+                            document.getElementById('listCount').textContent = '';
+                            addLog('Session closed. Reconnecting automatically...', 'info');
+                            // Retry after a longer delay when reconnecting
+                            setTimeout(() => {
+                                loadGroups();
+                            }, 10000); // Wait 10 seconds for reconnection
                         } else {
                             throw new Error(data.error);
                         }
@@ -705,14 +765,22 @@
                 }
             } catch (error) {
                 console.error('Error loading groups:', error);
-                if (error.message && (error.message.includes('Session closed') || error.message.includes('reset'))) {
-                    listContainer.innerHTML = '<div class="empty-state">Client is being reset. Please wait and refresh...</div>';
+                if (error.message && (error.message.includes('Session closed') || error.message.includes('reset') || error.message.includes('Protocol error'))) {
+                    listContainer.innerHTML = '<div class="empty-state">Session closed. Reconnecting automatically... Please wait a moment and try again.</div>';
                     document.getElementById('listCount').textContent = '';
-                    addLog('Client session is being reset. Please wait...', 'error');
+                    addLog('Session closed. Reconnecting automatically...', 'info');
+                    // Retry after a delay
+                    setTimeout(() => {
+                        loadGroups();
+                    }, 10000);
                 } else if (error.message && error.message.includes('not ready')) {
                     listContainer.innerHTML = '<div class="empty-state">WhatsApp client not ready yet. Please wait...</div>';
                     document.getElementById('listCount').textContent = '';
                     addLog('Waiting for WhatsApp connection...', 'error');
+                    // Retry after a delay
+                    setTimeout(() => {
+                        loadGroups();
+                    }, 3000);
                 } else {
                     listContainer.innerHTML = '<div class="empty-state">Error loading groups</div>';
                     document.getElementById('listCount').textContent = '';
@@ -816,14 +884,21 @@
 
         // Switch list view (groups/contacts)
         function switchListView(view) {
+            console.log('switchListView called with view:', view);
             currentView = view;
             const listSearch = document.getElementById('listSearch');
             const listTitle = document.getElementById('listTitle');
             const groupsTabBtn = document.getElementById('groupsTabBtn');
             const contactsTabBtn = document.getElementById('contactsTabBtn');
             
+            if (!listSearch || !listTitle || !groupsTabBtn || !contactsTabBtn) {
+                console.error('Required elements not found for switchListView');
+                return;
+            }
+            
             // Update UI
             if (view === 'groups') {
+                console.log('Switching to groups view');
                 listTitle.textContent = 'Groups';
                 listSearch.placeholder = '🔍 Search groups by name...';
                 groupsTabBtn.style.background = '#25D366';
@@ -831,14 +906,18 @@
                 contactsTabBtn.style.background = '#667eea';
                 contactsTabBtn.style.color = 'white';
                 loadGroups();
-            } else {
+            } else if (view === 'contacts') {
+                console.log('Switching to contacts view');
                 listTitle.textContent = 'Contacts';
                 listSearch.placeholder = '🔍 Search contacts by name...';
                 contactsTabBtn.style.background = '#25D366';
                 contactsTabBtn.style.color = 'white';
                 groupsTabBtn.style.background = '#667eea';
                 groupsTabBtn.style.color = 'white';
+                console.log('Calling loadContacts()...');
                 loadContacts();
+            } else {
+                console.error('Unknown view type:', view);
             }
             
             listSearch.value = '';
@@ -850,6 +929,74 @@
                 loadGroups();
             } else {
                 loadContacts();
+            }
+        }
+
+        // Reset and validate list (forces fresh fetch from WhatsApp)
+        async function resetList() {
+            const resetBtn = document.getElementById('resetBtn');
+            const originalText = resetBtn.textContent;
+            const listContainer = document.getElementById('listContainer');
+            
+            try {
+                resetBtn.disabled = true;
+                resetBtn.textContent = '🔄 Resetting...';
+                listContainer.innerHTML = '<div class="loading">Resetting and validating list...</div>';
+                addLog('Resetting list and validating groups/contacts...', 'info');
+                
+                const response = await fetch('/api/reset-list', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    throw new Error('Server returned non-JSON response');
+                }
+                
+                const data = await response.json();
+                
+                if (data.ok) {
+                    if (currentView === 'groups') {
+                        groups = data.groups || [];
+                        if (groups.length === 0) {
+                            listContainer.innerHTML = '<div class="empty-state">No groups found after reset</div>';
+                            document.getElementById('listCount').textContent = '';
+                        } else {
+                            renderGroups(groups);
+                            updateListCount(groups.length);
+                        }
+                        addLog(`Reset complete: ${data.groupsCount || 0} valid groups found`, 'success');
+                    } else {
+                        contacts = data.contacts || [];
+                        if (contacts.length === 0) {
+                            listContainer.innerHTML = '<div class="empty-state">No contacts found after reset</div>';
+                            document.getElementById('listCount').textContent = '';
+                        } else {
+                            renderContacts(contacts);
+                            updateListCount(contacts.length);
+                        }
+                        addLog(`Reset complete: ${data.contactsCount || 0} valid contacts found`, 'success');
+                    }
+                    
+                    // Also refresh the select dropdown
+                    if (currentMessageType === 'group') {
+                        loadGroupsForSelect();
+                    } else {
+                        loadContactsForSelect();
+                    }
+                } else {
+                    throw new Error(data.error || 'Failed to reset list');
+                }
+            } catch (error) {
+                console.error('Error resetting list:', error);
+                listContainer.innerHTML = '<div class="empty-state">Error resetting list: ' + error.message + '</div>';
+                addLog('Error resetting list: ' + error.message, 'error');
+            } finally {
+                resetBtn.disabled = false;
+                resetBtn.textContent = originalText;
             }
         }
 
@@ -898,18 +1045,36 @@
 
         // Switch message type (group/contact)
         function switchMessageType(type) {
+            console.log('switchMessageType called with type:', type);
             currentMessageType = type;
             const recipientSelect = document.getElementById('recipientId');
             const recipientLabel = document.getElementById('recipientLabel');
             
+            if (!recipientSelect) {
+                console.error('recipientId element not found!');
+                return;
+            }
+            
+            if (!recipientLabel) {
+                console.error('recipientLabel element not found!');
+                return;
+            }
+            
             if (type === 'group') {
+                console.log('Switching to group mode');
                 recipientLabel.textContent = 'Select Group';
                 recipientSelect.innerHTML = '<option value="">Loading groups...</option>';
+                recipientSelect.disabled = false;
                 loadGroupsForSelect();
-            } else {
+            } else if (type === 'contact') {
+                console.log('Switching to contact mode');
                 recipientLabel.textContent = 'Select Contact';
                 recipientSelect.innerHTML = '<option value="">Loading contacts...</option>';
+                recipientSelect.disabled = false;
+                console.log('Calling loadContactsForSelect()...');
                 loadContactsForSelect();
+            } else {
+                console.error('Unknown message type:', type);
             }
         }
 
@@ -918,40 +1083,117 @@
             const recipientSelect = document.getElementById('recipientId');
             try {
                 const response = await fetch('/list-groups');
+                
+                // Check if response is JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    recipientSelect.innerHTML = '<option value="">Error: Server returned non-JSON response</option>';
+                    return;
+                }
+                
                 const data = await response.json();
                 
                 if (data.ok && data.groups) {
                     recipientSelect.innerHTML = '<option value="">Select a group...</option>';
-                    data.groups.forEach(group => {
+                    if (data.groups.length === 0) {
+                        recipientSelect.innerHTML = '<option value="">No groups found</option>';
+                    } else {
+                        data.groups.forEach(group => {
                         const option = document.createElement('option');
                         option.value = group.id;
                         option.textContent = `${group.name} (${group.participants || 0} members)`;
-                        recipientSelect.appendChild(option);
-                    });
+                            recipientSelect.appendChild(option);
+                        });
+                    }
+                } else {
+                    // Handle errors
+                    const errorMsg = data.error || 'Failed to load groups';
+                    recipientSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
+                    
+                    // If it's a "not ready" or "reconnecting" error, retry after a delay
+                    if (errorMsg.includes('not ready') || errorMsg.includes('Reconnecting') || data.reconnecting) {
+                        setTimeout(() => {
+                            if (currentMessageType === 'group') {
+                                loadGroupsForSelect();
+                            }
+                        }, 5000);
+                    }
                 }
             } catch (error) {
-                recipientSelect.innerHTML = '<option value="">Error loading groups</option>';
+                console.error('Error loading groups for select:', error);
+                recipientSelect.innerHTML = `<option value="">Error: ${error.message || 'Failed to load groups'}</option>`;
+                
+                // Retry after a delay
+                setTimeout(() => {
+                    if (currentMessageType === 'group') {
+                        loadGroupsForSelect();
+                    }
+                }, 5000);
             }
         }
 
         // Load contacts for select dropdown
         async function loadContactsForSelect() {
             const recipientSelect = document.getElementById('recipientId');
+            console.log('Loading contacts for select dropdown...');
+            
             try {
                 const response = await fetch('/list-contacts');
+                
+                // Check if response is JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    console.error('Server returned non-JSON response');
+                    recipientSelect.innerHTML = '<option value="">Error: Server returned non-JSON response</option>';
+                    return;
+                }
+                
                 const data = await response.json();
+                console.log('Contacts response:', { ok: data.ok, count: data.count, hasContacts: !!data.contacts, contactsLength: data.contacts?.length });
                 
                 if (data.ok && data.contacts) {
                     recipientSelect.innerHTML = '<option value="">Select a contact...</option>';
-                    data.contacts.forEach(contact => {
-                        const option = document.createElement('option');
-                        option.value = contact.id;
-                        option.textContent = `${contact.name}${contact.number ? ' (' + contact.number + ')' : ''}`;
-                        recipientSelect.appendChild(option);
-                    });
+                    if (data.contacts.length === 0) {
+                        console.warn('No contacts found');
+                        recipientSelect.innerHTML = '<option value="">No contacts found. Start a chat with someone first.</option>';
+                        addLog('No personal contacts found. You need to have at least one chat with a contact.', 'info');
+                    } else {
+                        console.log(`Adding ${data.contacts.length} contacts to dropdown`);
+                        data.contacts.forEach(contact => {
+                            const option = document.createElement('option');
+                            option.value = contact.id;
+                            option.textContent = `${contact.name}${contact.number ? ' (' + contact.number + ')' : ''}`;
+                            recipientSelect.appendChild(option);
+                        });
+                        addLog(`Loaded ${data.contacts.length} contact(s)`, 'success');
+                    }
+                } else {
+                    // Handle errors
+                    const errorMsg = data.error || 'Failed to load contacts';
+                    console.error('Error loading contacts:', errorMsg);
+                    recipientSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
+                    addLog(`Error loading contacts: ${errorMsg}`, 'error');
+                    
+                    // If it's a "not ready" or "reconnecting" error, retry after a delay
+                    if (errorMsg.includes('not ready') || errorMsg.includes('Reconnecting') || data.reconnecting) {
+                        setTimeout(() => {
+                            if (currentMessageType === 'contact') {
+                                loadContactsForSelect();
+                            }
+                        }, 5000);
+                    }
                 }
             } catch (error) {
-                recipientSelect.innerHTML = '<option value="">Error loading contacts</option>';
+                console.error('Error loading contacts for select:', error);
+                recipientSelect.innerHTML = `<option value="">Error: ${error.message || 'Failed to load contacts'}</option>`;
+                addLog(`Error loading contacts: ${error.message}`, 'error');
+                
+                // Retry after a delay
+                setTimeout(() => {
+                    if (currentMessageType === 'contact') {
+                        loadContactsForSelect();
+                    }
+                }, 5000);
             }
         }
 
@@ -1035,12 +1277,12 @@
                 } else {
                     // Send text only
                     response = await fetch(endpoint, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
                         body: JSON.stringify({ [idField]: recipientId, message })
-                    });
+                });
                 }
 
                 const data = await response.json();
@@ -1098,6 +1340,16 @@
             const modal = document.getElementById('qrModal');
             const qrContainer = document.getElementById('qrCodeContainer');
             
+            if (!modal) {
+                console.error('QR modal element not found!');
+                return;
+            }
+            
+            if (!qrContainer) {
+                console.error('QR container element not found!');
+                return;
+            }
+            
             if (qrDataUrl) {
                 qrContainer.innerHTML = `<img src="${qrDataUrl}" alt="WhatsApp QR Code">`;
             } else {
@@ -1105,11 +1357,18 @@
             }
             
             modal.classList.add('active');
+            console.log('QR modal shown');
         }
 
         function hideQRModal() {
+            console.log('hideQRModal called');
             const modal = document.getElementById('qrModal');
-            modal.classList.remove('active');
+            if (modal) {
+                modal.classList.remove('active');
+                console.log('QR modal hidden - class removed');
+            } else {
+                console.error('QR modal element not found when trying to hide');
+            }
         }
 
         // Check for QR code
@@ -1130,24 +1389,57 @@
 
         // Show QR code modal (fetch QR code first)
         async function showQRCodeModal() {
-            showQRModal(); // Show modal with loading state
+            console.log('showQRCodeModal called');
             try {
+                const modal = document.getElementById('qrModal');
+                const qrContainer = document.getElementById('qrCodeContainer');
+                
+                if (!modal) {
+                    console.error('QR modal element not found!');
+                    addLog('Error: QR modal not found in DOM', 'error');
+                    return;
+                }
+                
+                if (!qrContainer) {
+                    console.error('QR container element not found!');
+                    addLog('Error: QR container not found in DOM', 'error');
+                    return;
+                }
+                
+                // Show modal with loading state
+                qrContainer.innerHTML = '<div class="qr-loading">Loading QR code...</div>';
+                modal.classList.add('active');
+                console.log('Modal shown, fetching QR code...');
+                
                 const response = await fetch('/api/qr');
                 const data = await response.json();
+                console.log('QR code response:', { hasQR: data.hasQR, ready: data.ready, hasQrData: !!data.qr });
                 
                 if (data.hasQR && data.qr) {
-                    showQRModal(data.qr);
+                    qrContainer.innerHTML = `<img src="${data.qr}" alt="WhatsApp QR Code">`;
+                    addLog('QR code loaded successfully', 'success');
                 } else if (data.ready) {
-                    const qrContainer = document.getElementById('qrCodeContainer');
                     qrContainer.innerHTML = '<div class="qr-loading">✅ Already connected! No QR code needed.</div>';
+                    addLog('Already connected to WhatsApp', 'success');
                 } else {
-                    const qrContainer = document.getElementById('qrCodeContainer');
-                    qrContainer.innerHTML = '<div class="qr-loading">QR code not available yet. Please wait...</div>';
+                    qrContainer.innerHTML = '<div class="qr-loading">QR code not available yet. Please wait for connection...</div>';
+                    addLog('QR code not available. Waiting for WhatsApp to generate QR code...', 'info');
+                    // Try to check again after a delay
+                    setTimeout(() => {
+                        if (modal.classList.contains('active')) {
+                            showQRCodeModal();
+                        }
+                    }, 3000);
                 }
             } catch (error) {
-                console.error('Error fetching QR code:', error);
+                console.error('Error in showQRCodeModal:', error);
+                const modal = document.getElementById('qrModal');
                 const qrContainer = document.getElementById('qrCodeContainer');
-                qrContainer.innerHTML = '<div class="qr-loading" style="color: #dc3545;">Error loading QR code. Please try again.</div>';
+                if (modal && qrContainer) {
+                    qrContainer.innerHTML = '<div class="qr-loading" style="color: #dc3545;">Error loading QR code. Please try again.</div>';
+                    modal.classList.add('active');
+                }
+                addLog('Error loading QR code: ' + error.message, 'error');
             }
         }
 
@@ -1281,15 +1573,119 @@
             await checkStatus();
         }
 
+        // Add event listener for QR code button as backup (after DOM is ready)
+        document.addEventListener('DOMContentLoaded', () => {
+            // Make functions globally accessible
+            window.showQRCodeModal = showQRCodeModal;
+            window.hideQRModal = hideQRModal;
+            window.logoutWhatsApp = logoutWhatsApp;
+            window.switchMessageType = switchMessageType;
+            window.switchListView = switchListView;
+            
+            // Add backup event listener for QR button
+            const qrButton = document.querySelector('button[onclick*="showQRCodeModal"]');
+            if (qrButton) {
+                qrButton.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('QR button clicked via event listener');
+                    showQRCodeModal();
+                });
+            }
+            
+            // Add event listener for close button
+            const closeQRBtn = document.getElementById('closeQRBtn');
+            if (closeQRBtn) {
+                closeQRBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('Close button clicked via event listener');
+                    hideQRModal();
+                });
+            }
+            
+            // Also allow clicking outside modal to close
+            const qrModal = document.getElementById('qrModal');
+            if (qrModal) {
+                qrModal.addEventListener('click', (e) => {
+                    if (e.target.id === 'qrModal') {
+                        console.log('Modal background clicked - closing');
+                        hideQRModal();
+                    }
+                });
+            }
+            
+            // Add event listeners to radio buttons as backup
+            const groupRadio = document.querySelector('input[name="messageType"][value="group"]');
+            const contactRadio = document.querySelector('input[name="messageType"][value="contact"]');
+            
+            if (groupRadio) {
+                groupRadio.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        console.log('Group radio button checked via event listener');
+                        switchMessageType('group');
+                    }
+                });
+            }
+            
+            if (contactRadio) {
+                contactRadio.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        console.log('Contact radio button checked via event listener');
+                        switchMessageType('contact');
+                    }
+                });
+            }
+            
+            // Add event listeners to tab buttons as backup
+            const groupsTabBtn = document.getElementById('groupsTabBtn');
+            const contactsTabBtn = document.getElementById('contactsTabBtn');
+            
+            if (groupsTabBtn) {
+                groupsTabBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    console.log('Groups tab clicked via event listener');
+                    switchListView('groups');
+                });
+                // Set initial tab button style
+                groupsTabBtn.style.background = '#25D366';
+                groupsTabBtn.style.color = 'white';
+            }
+            
+            if (contactsTabBtn) {
+                contactsTabBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    console.log('Contacts tab clicked via event listener');
+                    switchListView('contacts');
+                });
+            }
+        });
+        
+        // Make functions globally accessible immediately (for inline onclick)
+        window.showQRCodeModal = showQRCodeModal;
+        window.hideQRModal = hideQRModal;
+        window.logoutWhatsApp = logoutWhatsApp;
+        window.resetList = resetList;
+        window.refreshCurrentList = refreshCurrentList;
+        window.switchMessageType = switchMessageType;
+        window.switchListView = switchListView;
+        window.loadContacts = loadContacts;
+        window.loadGroups = loadGroups;
+
         // Initialize
         checkStatus();
         loadGroups(); // Load groups by default
         loadGroupsForSelect(); // Load groups for send form
         connectQRStream();
         
-        // Set initial tab button style
-        document.getElementById('groupsTabBtn').style.background = '#25D366';
-        document.getElementById('groupsTabBtn').style.color = 'white';
+        // Set initial tab button style (fallback if DOMContentLoaded hasn't fired)
+        setTimeout(() => {
+            const groupsTabBtn = document.getElementById('groupsTabBtn');
+            if (groupsTabBtn) {
+                groupsTabBtn.style.background = '#25D366';
+                groupsTabBtn.style.color = 'white';
+            }
+        }, 100);
         
         // Refresh status every 10 seconds (with debouncing)
         setInterval(checkStatusOptimized, 10000);
