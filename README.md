@@ -92,6 +92,17 @@ curl -X POST http://localhost:3000/send-group \
 
 For complete documentation with examples in Python, Node.js, PHP, and more, see [API_DOCUMENTATION.md](./API_DOCUMENTATION.md).
 
+## Integrating into Other Projects
+
+🔗 **Integration Guide**: See [INTEGRATION_GUIDE.md](./INTEGRATION_GUIDE.md) for step-by-step instructions on how to use this API in your other projects (Node.js, Python, React, PHP, etc.).
+
+The integration guide includes:
+- Complete code examples for multiple languages
+- How to set up the API client in your project
+- Best practices for error handling and rate limiting
+- Troubleshooting common issues
+- Production deployment tips
+
 ## Finding Group IDs
 
 The easiest way is to use the `/list-groups` endpoint. It returns all groups with their IDs and names.
@@ -103,6 +114,29 @@ Alternatively:
 
 ## Server Deployment
 
+🚀 **Complete Deployment Guide**: See [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) for detailed instructions on deploying to Railway, Render, DigitalOcean, AWS, and more.
+
+### ⚠️ Important: Platform Compatibility
+
+**❌ Vercel/Netlify Functions**: NOT compatible - This app requires long-running processes, persistent storage, and WebSocket connections. Serverless platforms won't work.
+
+**✅ Recommended Platforms:**
+- **Render** (100% FREE) - No credit card needed, forever free tier
+- **Railway** (Easiest) - $5 credit/month, one-click deployment
+- **DigitalOcean App Platform** - Reliable, $5/month
+- **AWS EC2/Lightsail** - Full control, scalable (12 months free tier)
+
+### Quick Deploy to Render (100% FREE)
+
+1. Push your code to GitHub
+2. Go to [render.com](https://render.com) and sign up (no credit card needed)
+3. Click "New" → "Web Service"
+4. Connect your GitHub repository
+5. Render auto-detects and deploys
+6. Get your public URL (e.g., `https://your-app.onrender.com`) and use it in your other projects!
+
+**Note:** Render's free tier sleeps after 15 min inactivity but wakes automatically on first request.
+
 ### Requirements
 - Node.js 16+
 - Chrome/Chromium dependencies (for Puppeteer)
@@ -113,7 +147,7 @@ Alternatively:
     chromium-chromedriver
   ```
 
-### Process Management
+### Process Management (For VPS/EC2)
 Use PM2 or systemd to keep the process running:
 
 ```bash
