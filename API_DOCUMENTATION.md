@@ -4,27 +4,40 @@ This app provides a complete REST API for sending WhatsApp messages, managing gr
 
 ## Base URL
 
-```
-http://localhost:3000
-```
-
-For production, replace with your server's domain/IP address.
+- **Local:** `http://localhost:4000` (default port; set `PORT` in `.env` to override)
+- **Production:** `https://your-domain.com` or `http://your-server-ip:4000` (use HTTPS via reverse proxy in production)
 
 ## Authentication
 
-⚠️ **IMPORTANT**: The API is currently **unauthenticated**. Add authentication before deploying to production!
+- **Dashboard (browser):** No API key needed when opening the app in a browser on the same server (e.g. `https://your-domain.com/`).
+- **External apps (curl, Postman, your backend):** When `API_KEY` is set in `.env`, you **must** send the header `X-API-Key` with every request.
 
-### Recommended: API Key Authentication
-
-Add this to your `.env` file:
+Add to your `.env`:
 ```bash
-API_KEY=your-secret-api-key-here
+API_KEY=your-secure-random-api-key
 ```
 
-Then include the API key in requests:
+Example from another app or curl:
 ```bash
-curl -H "X-API-Key: your-secret-api-key-here" http://localhost:3000/status
+curl -H "X-API-Key: your-secure-random-api-key" https://your-domain.com/status
 ```
+
+### Testing from another app (before deployment)
+
+To verify that external callers need the API key and that your key works, run the included test script **while the WhatsApp API is running** (e.g. in another terminal: `npm start`):
+
+```bash
+# Ensure .env has API_KEY set (same as the server)
+node test-external-call.js
+```
+
+Optional: override base URL or API key:
+```bash
+node test-external-call.js http://localhost:4000
+API_KEY=mykey node test-external-call.js
+```
+
+The script calls `/status` without and with `X-API-Key`. You should see 401 without the key (when `API_KEY` is set) and 200 with the key. To test from a real second app, run that app on another port (e.g. 3000) and have it call `http://localhost:4000` with the `X-API-Key` header.
 
 ## Rate Limiting
 
@@ -50,7 +63,7 @@ Check if the API server is running.
 
 **Example:**
 ```bash
-curl http://localhost:3000/api/health
+curl http://localhost:4000/api/health
 ```
 
 ---
@@ -85,7 +98,7 @@ Get the current WhatsApp connection status and anti-detection system metrics.
 
 **Example:**
 ```bash
-curl http://localhost:3000/status
+curl http://localhost:4000/status
 ```
 
 **Response Fields:**
@@ -126,7 +139,7 @@ Get a list of all WhatsApp groups with their IDs and participant counts.
 
 **Example:**
 ```bash
-curl http://localhost:3000/list-groups
+curl http://localhost:4000/list-groups
 ```
 
 **Error Response:**
@@ -168,7 +181,7 @@ Get a list of all personal contacts (individual chats, not groups).
 
 **Example:**
 ```bash
-curl http://localhost:3000/list-contacts
+curl http://localhost:4000/list-contacts
 ```
 
 **Note:** Only contacts with active chats (at least one message sent) will appear.
@@ -214,7 +227,7 @@ file: [binary file data]
 
 **Example (Text):**
 ```bash
-curl -X POST http://localhost:3000/send-group \
+curl -X POST http://localhost:4000/send-group \
   -H "Content-Type: application/json" \
   -d '{
     "groupId": "120363123456789012@g.us",
@@ -224,7 +237,7 @@ curl -X POST http://localhost:3000/send-group \
 
 **Example (File with cURL):**
 ```bash
-curl -X POST http://localhost:3000/send-group \
+curl -X POST http://localhost:4000/send-group \
   -F "groupId=120363123456789012@g.us" \
   -F "message=Check out this image!" \
   -F "file=@/path/to/image.jpg"
@@ -237,7 +250,7 @@ formData.append('groupId', '120363123456789012@g.us');
 formData.append('message', 'Check out this image!');
 formData.append('file', fileInput.files[0]);
 
-fetch('http://localhost:3000/send-group', {
+fetch('http://localhost:4000/send-group', {
   method: 'POST',
   body: formData
 })
@@ -300,7 +313,7 @@ file: [binary file data]
 
 **Example (Text):**
 ```bash
-curl -X POST http://localhost:3000/send-contact \
+curl -X POST http://localhost:4000/send-contact \
   -H "Content-Type: application/json" \
   -d '{
     "contactId": "1234567890@c.us",
@@ -310,7 +323,7 @@ curl -X POST http://localhost:3000/send-contact \
 
 **Example (File):**
 ```bash
-curl -X POST http://localhost:3000/send-contact \
+curl -X POST http://localhost:4000/send-contact \
   -F "contactId=1234567890@c.us" \
   -F "message=Check out this PDF!" \
   -F "file=@/path/to/document.pdf"
@@ -338,7 +351,7 @@ Force a fresh fetch of groups and contacts from WhatsApp, removing invalid entri
 
 **Example:**
 ```bash
-curl -X POST http://localhost:3000/api/reset-list
+curl -X POST http://localhost:4000/api/reset-list
 ```
 
 ---
@@ -359,7 +372,7 @@ Get the current QR code as a base64-encoded image for authentication.
 
 **Example:**
 ```bash
-curl http://localhost:3000/api/qr
+curl http://localhost:4000/api/qr
 ```
 
 **Note:** Only available when the client is in "QR code" state (not authenticated).
@@ -376,7 +389,7 @@ Get the QR code as a Server-Sent Events (SSE) stream for real-time updates.
 
 **Example (JavaScript):**
 ```javascript
-const eventSource = new EventSource('http://localhost:3000/api/qr-stream');
+const eventSource = new EventSource('http://localhost:4000/api/qr-stream');
 eventSource.onmessage = (event) => {
   const data = JSON.parse(event.data);
   if (data.qr) {
@@ -403,7 +416,7 @@ Log out from WhatsApp and clear the session.
 
 **Example:**
 ```bash
-curl -X POST http://localhost:3000/api/logout
+curl -X POST http://localhost:4000/api/logout
 ```
 
 **Note:** After logout, you'll need to scan the QR code again to reconnect.
@@ -459,7 +472,7 @@ Messages are automatically queued to prevent detection by WhatsApp. When you sen
 ```python
 import requests
 
-BASE_URL = "http://localhost:3000"
+BASE_URL = "http://localhost:4000"
 
 # Check status
 status = requests.get(f"{BASE_URL}/status").json()
@@ -497,7 +510,7 @@ print(response.json())
 ```javascript
 const axios = require('axios');
 
-const BASE_URL = 'http://localhost:3000';
+const BASE_URL = 'http://localhost:4000';
 
 async function sendMessage() {
   try {
@@ -527,7 +540,7 @@ sendMessage();
 
 ```php
 <?php
-$baseUrl = 'http://localhost:3000';
+$baseUrl = 'http://localhost:4000';
 
 // Check status
 $status = json_decode(file_get_contents("$baseUrl/status"), true);
@@ -567,7 +580,7 @@ app.post('/webhook', async (req, res) => {
   
   if (event === 'new_order') {
     // Send WhatsApp notification
-    await fetch('http://localhost:3000/send-group', {
+    await fetch('http://localhost:4000/send-group', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

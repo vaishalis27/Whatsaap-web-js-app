@@ -4,8 +4,9 @@
   "description": "WhatsApp Web automation API using whatsapp-web.js",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "start": "node --no-deprecation server.js",
+    "dev": "node --no-deprecation server.js",
+    "postinstall": "patch-package"
   },
   "keywords": [
     "whatsapp",
@@ -17,13 +18,16 @@
   "dependencies": {
     "compression": "^1.8.1",
     "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "express-rate-limit": "^8.2.1",
-    "express-validator": "^7.3.0",
     "helmet": "^8.1.0",
     "multer": "^2.0.2",
     "qrcode": "^1.5.3",
     "qrcode-terminal": "^0.12.0",
     "whatsapp-web.js": "^1.23.0"
+  },
+  "devDependencies": {
+    "patch-package": "^8.0.1"
   }
 }

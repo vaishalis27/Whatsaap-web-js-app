@@ -59,6 +59,11 @@
             color: #721c24;
         }
 
+        .status-badge.restoring {
+            background: #fff3cd;
+            color: #856404;
+        }
+
         .status-dot {
             width: 8px;
             height: 8px;
@@ -552,6 +557,31 @@
         let currentView = 'groups'; // 'groups' or 'contacts'
         let currentMessageType = 'group'; // 'group' or 'contact'
 
+        let isWhatsAppConnected = false;
+
+        document.addEventListener('DOMContentLoaded', () => init());
+
+        // Clear all session data (groups, contacts, UI) - call on logout
+        function clearSessionData() {
+            groups = [];
+            contacts = [];
+            isWhatsAppConnected = false;
+            const badge = document.getElementById('statusBadge');
+            const info = document.getElementById('statusInfo');
+            const listContainer = document.getElementById('listContainer');
+            const recipientId = document.getElementById('recipientId');
+            const logoutBtn = document.getElementById('logoutBtn');
+            if (badge) {
+                badge.className = 'status-badge disconnected';
+                badge.innerHTML = '<span class="status-dot"></span><span>Disconnected</span>';
+            }
+            if (info) info.textContent = 'Scan QR code to connect. Click "Show QR Code".';
+            if (listContainer) listContainer.innerHTML = '<div class="empty-state">Scan QR code above to connect WhatsApp</div>';
+            if (recipientId) recipientId.innerHTML = '<option value="">Connect WhatsApp first</option>';
+            if (logoutBtn) logoutBtn.style.display = 'none';
+            showQRCodeModal();
+        }
+
         // Check status on load
         async function checkStatus() {
             try {
@@ -564,6 +594,7 @@
                 const logoutBtn = document.getElementById('logoutBtn');
                 
                 if (data.ready) {
+                    isWhatsAppConnected = true;
                     badge.className = 'status-badge connected';
                     badge.innerHTML = '<span class="status-dot"></span><span>Connected</span>';
                     if (data.info) {
@@ -571,15 +602,35 @@
                     }
                     logoutBtn.style.display = 'inline-block';
                     hideQRModal();
+                    // Load groups/contacts only when connected
+                    if (currentView === 'groups') loadGroups();
+                    else loadContacts();
+                    if (currentMessageType === 'group') loadGroupsForSelect();
+                    else loadContactsForSelect();
+                } else if (data.restoring) {
+                    // Restoring saved session – no QR code needed
+                    isWhatsAppConnected = false;
+                    badge.className = 'status-badge restoring';
+                    badge.innerHTML = '<span class="status-dot"></span><span>Restoring session...</span>';
+                    info.textContent = 'Restoring session... Please wait.';
+                    logoutBtn.style.display = 'none';
+                    document.getElementById('listContainer').innerHTML = '<div class="empty-state">Restoring session... Please wait.<br><button type="button" class="btn btn-secondary" style="margin-top:10px;" onclick="document.getElementById(\'forceQrRestore\').click()">Taking too long? Clear session &amp; get new QR</button></div><a href="#" id="forceQrRestore" style="display:none;"></a>';
+                    const forceLink = document.getElementById('forceQrRestore');
+                    if (forceLink) forceLink.onclick = async (e) => { e.preventDefault(); await triggerForceNewQR(null, null); showQRCodeModal(); };
+                    document.getElementById('recipientId').innerHTML = '<option value="">Restoring session...</option>';
+                    // Do NOT show QR modal – we're restoring from saved session
                 } else {
+                    isWhatsAppConnected = false;
                     badge.className = 'status-badge disconnected';
                     badge.innerHTML = '<span class="status-dot"></span><span>Disconnected</span>';
-                    info.textContent = 'Waiting for WhatsApp connection...';
+                    info.textContent = 'Scan QR code to connect. Click "Show QR Code".';
                     logoutBtn.style.display = 'none';
-                    // Check if QR code is available
-                    checkQRCode();
+                    document.getElementById('listContainer').innerHTML = '<div class="empty-state">Scan QR code above to connect WhatsApp</div>';
+                    document.getElementById('recipientId').innerHTML = '<option value="">Connect WhatsApp first</option>';
+                    showQRCodeModal();
                 }
             } catch (error) {
+                isWhatsAppConnected = false;
                 const badge = document.getElementById('statusBadge');
                 badge.className = 'status-badge disconnected';
                 badge.innerHTML = '<span class="status-dot"></span><span>Error</span>';
@@ -589,9 +640,12 @@
 
         // Load contacts
         async function loadContacts() {
+            if (!isWhatsAppConnected) {
+                document.getElementById('listContainer').innerHTML = '<div class="empty-state">Scan QR code to connect WhatsApp first</div>';
+                return;
+            }
             const listContainer = document.getElementById('listContainer');
             listContainer.innerHTML = '<div class="loading">Loading contacts...</div>';
-            console.log('Loading contacts for list view...');
 
             try {
                 const response = await fetch('/list-contacts');
@@ -641,15 +695,11 @@
                     // Check for specific error types
                     if (data.error) {
                         if (data.error.includes('not ready')) {
-                            listContainer.innerHTML = '<div class="empty-state">WhatsApp client not ready yet. Please wait...</div>';
+                            isWhatsAppConnected = false;
+                            listContainer.innerHTML = '<div class="empty-state">Scan QR code to connect WhatsApp</div>';
                             document.getElementById('listCount').textContent = '';
-                            addLog('Waiting for WhatsApp connection...', 'error');
-                            // Retry after a delay
-                            setTimeout(() => {
-                                if (currentView === 'contacts') {
-                                    loadContacts();
-                                }
-                            }, 3000);
+                            addLog('Connect WhatsApp first - scan QR code', 'info');
+                            setTimeout(() => { if (currentView === 'contacts') loadContacts(); }, 15000);
                         } else if (data.error.includes('reset') || data.error.includes('being reset')) {
                             listContainer.innerHTML = '<div class="empty-state">Client is being reset. Please wait...</div>';
                             document.getElementById('listCount').textContent = '';
@@ -705,13 +755,16 @@
 
         // Load groups
         async function loadGroups() {
+            if (!isWhatsAppConnected) {
+                document.getElementById('listContainer').innerHTML = '<div class="empty-state">Scan QR code to connect WhatsApp first</div>';
+                return;
+            }
             const listContainer = document.getElementById('listContainer');
             listContainer.innerHTML = '<div class="loading">Loading groups...</div>';
 
             try {
                 const response = await fetch('/list-groups');
                 
-                // Check if response is JSON
                 const contentType = response.headers.get('content-type');
                 if (!contentType || !contentType.includes('application/json')) {
                     const text = await response.text();
@@ -735,15 +788,11 @@
                     // Check for specific error types
                     if (data.error) {
                         if (data.error.includes('not ready')) {
-                            listContainer.innerHTML = '<div class="empty-state">WhatsApp client not ready yet. Please wait...</div>';
+                            isWhatsAppConnected = false;
+                            listContainer.innerHTML = '<div class="empty-state">Scan QR code to connect WhatsApp</div>';
                             document.getElementById('listCount').textContent = '';
-                            addLog('Waiting for WhatsApp connection...', 'error');
-                            // Retry after a delay
-                            setTimeout(() => {
-                                if (currentView === 'groups') {
-                                    loadGroups();
-                                }
-                            }, 3000);
+                            addLog('Connect WhatsApp first - scan QR code', 'info');
+                            setTimeout(() => { if (currentView === 'groups') loadGroups(); }, 15000);
                         } else if (data.error.includes('reset') || data.error.includes('being reset')) {
                             listContainer.innerHTML = '<div class="empty-state">Client is being reset. Please wait...</div>';
                             document.getElementById('listCount').textContent = '';
@@ -769,18 +818,13 @@
                     listContainer.innerHTML = '<div class="empty-state">Session closed. Reconnecting automatically... Please wait a moment and try again.</div>';
                     document.getElementById('listCount').textContent = '';
                     addLog('Session closed. Reconnecting automatically...', 'info');
-                    // Retry after a delay
-                    setTimeout(() => {
-                        loadGroups();
-                    }, 10000);
+                    setTimeout(() => { loadGroups(); }, 10000);
                 } else if (error.message && error.message.includes('not ready')) {
-                    listContainer.innerHTML = '<div class="empty-state">WhatsApp client not ready yet. Please wait...</div>';
+                    isWhatsAppConnected = false;
+                    listContainer.innerHTML = '<div class="empty-state">Scan QR code to connect WhatsApp</div>';
                     document.getElementById('listCount').textContent = '';
-                    addLog('Waiting for WhatsApp connection...', 'error');
-                    // Retry after a delay
-                    setTimeout(() => {
-                        loadGroups();
-                    }, 3000);
+                    addLog('Connect WhatsApp first - scan QR code', 'info');
+                    setTimeout(() => loadGroups(), 15000);
                 } else {
                     listContainer.innerHTML = '<div class="empty-state">Error loading groups</div>';
                     document.getElementById('listCount').textContent = '';
@@ -946,9 +990,7 @@
                 
                 const response = await fetch('/api/reset-list', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
+                    headers: { 'Content-Type': 'application/json' }
                 });
                 
                 const contentType = response.headers.get('content-type');
@@ -1081,10 +1123,13 @@
         // Load groups for select dropdown
         async function loadGroupsForSelect() {
             const recipientSelect = document.getElementById('recipientId');
+            if (!isWhatsAppConnected) {
+                recipientSelect.innerHTML = '<option value="">Connect WhatsApp first</option>';
+                return;
+            }
             try {
                 const response = await fetch('/list-groups');
                 
-                // Check if response is JSON
                 const contentType = response.headers.get('content-type');
                 if (!contentType || !contentType.includes('application/json')) {
                     recipientSelect.innerHTML = '<option value="">Error: Server returned non-JSON response</option>';
@@ -1110,37 +1155,33 @@
                     const errorMsg = data.error || 'Failed to load groups';
                     recipientSelect.innerHTML = `<option value="">Error: ${errorMsg}</option>`;
                     
-                    // If it's a "not ready" or "reconnecting" error, retry after a delay
                     if (errorMsg.includes('not ready') || errorMsg.includes('Reconnecting') || data.reconnecting) {
+                        isWhatsAppConnected = false;
                         setTimeout(() => {
-                            if (currentMessageType === 'group') {
-                                loadGroupsForSelect();
-                            }
-                        }, 5000);
+                            if (currentMessageType === 'group') loadGroupsForSelect();
+                        }, 15000);
                     }
                 }
             } catch (error) {
                 console.error('Error loading groups for select:', error);
                 recipientSelect.innerHTML = `<option value="">Error: ${error.message || 'Failed to load groups'}</option>`;
                 
-                // Retry after a delay
                 setTimeout(() => {
-                    if (currentMessageType === 'group') {
-                        loadGroupsForSelect();
-                    }
-                }, 5000);
+                    if (currentMessageType === 'group') loadGroupsForSelect();
+                }, 15000);
             }
         }
 
         // Load contacts for select dropdown
         async function loadContactsForSelect() {
             const recipientSelect = document.getElementById('recipientId');
-            console.log('Loading contacts for select dropdown...');
-            
+            if (!isWhatsAppConnected) {
+                recipientSelect.innerHTML = '<option value="">Connect WhatsApp first</option>';
+                return;
+            }
             try {
                 const response = await fetch('/list-contacts');
                 
-                // Check if response is JSON
                 const contentType = response.headers.get('content-type');
                 if (!contentType || !contentType.includes('application/json')) {
                     console.error('Server returned non-JSON response');
@@ -1180,7 +1221,7 @@
                             if (currentMessageType === 'contact') {
                                 loadContactsForSelect();
                             }
-                        }, 5000);
+                        }, 15000);
                     }
                 }
             } catch (error) {
@@ -1193,7 +1234,7 @@
                     if (currentMessageType === 'contact') {
                         loadContactsForSelect();
                     }
-                }, 5000);
+                }, 15000);
             }
         }
 
@@ -1277,15 +1318,18 @@
                 } else {
                     // Send text only
                     response = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ [idField]: recipientId, message })
-                });
+                    });
                 }
 
-                const data = await response.json();
+                let data;
+                try {
+                    data = await response.json();
+                } catch (parseErr) {
+                    throw new Error(response.ok ? 'Invalid server response' : `Server error (${response.status}). Check server logs.`);
+                }
                 const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
                 if (data.ok) {
@@ -1300,7 +1344,9 @@
                     throw new Error(data.error || 'Failed to send message');
                 }
             } catch (error) {
-                addLog('Error sending message: ' + error.message, 'error');
+                const msg = error.message || 'Failed to send message';
+                addLog('Error: ' + msg, 'error');
+                console.error('Send error:', error);
             } finally {
                 sendBtn.disabled = false;
                 sendBtn.textContent = 'Send Message';
@@ -1422,8 +1468,11 @@
                     qrContainer.innerHTML = '<div class="qr-loading">✅ Already connected! No QR code needed.</div>';
                     addLog('Already connected to WhatsApp', 'success');
                 } else {
-                    qrContainer.innerHTML = '<div class="qr-loading">QR code not available yet. Please wait for connection...</div>';
-                    addLog('QR code not available. Waiting for WhatsApp to generate QR code...', 'info');
+                    qrContainer.innerHTML = '<div class="qr-loading">QR code not available yet. If it doesn\'t appear in 60s, clear the session to get a fresh QR.<br><br>' +
+                        '<button type="button" class="btn btn-secondary" id="forceQrBtn" style="margin-top:8px;">Clear session &amp; get new QR</button></div>';
+                    addLog('QR code not available yet. Waiting for WhatsApp (can take 30–60s)...', 'info');
+                    const forceBtn = document.getElementById('forceQrBtn');
+                    if (forceBtn) forceBtn.onclick = () => triggerForceNewQR(modal, qrContainer);
                     // Try to check again after a delay
                     setTimeout(() => {
                         if (modal.classList.contains('active')) {
@@ -1443,6 +1492,40 @@
             }
         }
 
+        // Force new QR (clear session and reinitialize) when stuck
+        async function triggerForceNewQR(modal, qrContainer) {
+            const btn = document.getElementById('forceQrBtn');
+            if (btn) { btn.disabled = true; btn.textContent = 'Clearing session...'; }
+            try {
+                const r = await fetch('/api/force-qr', { method: 'POST' });
+                const data = await r.json();
+                if (data.ok) {
+                    addLog(data.message || 'Session cleared. Waiting for new QR...', 'success');
+                    if (qrContainer) qrContainer.innerHTML = '<div class="qr-loading">Session cleared. New QR will appear in 15–60 seconds. This page will update automatically.</div>';
+                    // Re-check every 3s until QR appears (modal may be null when called from "restoring" flow)
+                    const checkAgain = () => {
+                        const modalStillOpen = modal && modal.classList && modal.classList.contains('active');
+                        fetch('/api/qr').then(res => res.json()).then(d => {
+                            if (d.hasQR && d.qr && qrContainer) {
+                                qrContainer.innerHTML = `<img src="${d.qr}" alt="WhatsApp QR Code">`;
+                                addLog('QR code loaded. Scan with WhatsApp.', 'success');
+                                return;
+                            }
+                            if (modalStillOpen) setTimeout(checkAgain, 3000);
+                        }).catch(() => { if (modalStillOpen) setTimeout(checkAgain, 3000); });
+                    };
+                    setTimeout(checkAgain, 3000);
+                } else {
+                    addLog('Error: ' + (data.error || 'Failed to clear session'), 'error');
+                    if (qrContainer) qrContainer.innerHTML = '<div class="qr-loading" style="color:#dc3545;">' + (data.error || 'Failed') + '</div>';
+                }
+            } catch (e) {
+                addLog('Error: ' + e.message, 'error');
+                if (qrContainer) qrContainer.innerHTML = '<div class="qr-loading" style="color:#dc3545;">Request failed. Try again.</div>';
+            }
+            if (btn) { btn.disabled = false; btn.textContent = 'Clear session & get new QR'; }
+        }
+
         // Connect to QR code stream for real-time updates
         let eventSource = null;
         function connectQRStream() {
@@ -1459,6 +1542,7 @@
                     
                     if (data.loggedOut) {
                         addLog('Logged out successfully. Please scan a new QR code.', 'success');
+                        clearSessionData();
                         checkStatus();
                     }
                     
@@ -1504,9 +1588,7 @@
             try {
                 const response = await fetch('/api/logout', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
+                    headers: { 'Content-Type': 'application/json' }
                 });
                 
                 // Check if response is JSON
@@ -1520,14 +1602,11 @@
                 
                 if (data.ok) {
                     addLog('Logging out... Please wait for new QR code.', 'success');
-                    logoutBtn.style.display = 'none';
-                    // Disable groups loading temporarily
+                    clearSessionData(); // Clear groups, contacts, UI immediately
+                    logoutBtn.disabled = false;
                     setTimeout(() => {
                         checkStatus();
-                        // Wait a bit for new QR code
-                        setTimeout(() => {
-                            checkQRCode();
-                        }, 2000);
+                        setTimeout(() => checkQRCode(), 2000);
                     }, 1000);
                 } else {
                     throw new Error(data.error || 'Failed to logout');
@@ -1672,11 +1751,11 @@
         window.loadContacts = loadContacts;
         window.loadGroups = loadGroups;
 
-        // Initialize
-        checkStatus();
-        loadGroups(); // Load groups by default
-        loadGroupsForSelect(); // Load groups for send form
-        connectQRStream();
+        // Initialize - check status first, only load groups when connected (called from DOMContentLoaded)
+        async function init() {
+            connectQRStream();
+            await checkStatus();
+        }
         
         // Set initial tab button style (fallback if DOMContentLoaded hasn't fired)
         setTimeout(() => {

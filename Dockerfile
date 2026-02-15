@@ -45,11 +45,13 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy package files
+# Copy package files and patches (patch-package runs at postinstall)
+# Ensure patches/ exists in the repo (e.g. patches/.gitkeep) so COPY succeeds
 COPY package*.json ./
+COPY patches/ ./patches/
 
-# Install Node.js dependencies
-RUN npm ci --only=production
+# Install dependencies (postinstall runs patch-package - patches must exist first)
+RUN npm ci
 
 # Copy application files
 COPY . .
@@ -57,12 +59,12 @@ COPY . .
 # Create uploads directory
 RUN mkdir -p uploads
 
-# Expose port
-EXPOSE 3000
+# Expose port (default 4000, overridable via PORT env)
+EXPOSE 4000
 
 # Set environment to production
 ENV NODE_ENV=production
 
-# Start the application
-CMD ["node", "server.js"]
+# Start the application (--no-deprecation avoids punycode warnings)
+CMD ["node", "--no-deprecation", "server.js"]
 

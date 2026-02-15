@@ -1,0 +1,56 @@
+diff --git a/node_modules/whatsapp-web.js/src/Client.js b/node_modules/whatsapp-web.js/src/Client.js
+index a2437d1..69f675b 100644
+--- a/node_modules/whatsapp-web.js/src/Client.js
++++ b/node_modules/whatsapp-web.js/src/Client.js
+@@ -1858,7 +1858,7 @@ class Client extends EventEmitter {
+             const channel = await window.WWebJS.getChat(channelId, { getAsModel: false });
+             const newOwner = window.Store.Contact.get(newOwnerId) || (await window.Store.Contact.find(newOwnerId));
+             if (!channel.newsletterMetadata) {
+-                await window.Store.NewsletterMetadataCollection.update(channel.id);
++                await window.Store.NewsletterMetadataCollection?.update(channel.id);
+             }
+ 
+             try {
+diff --git a/node_modules/whatsapp-web.js/src/structures/GroupChat.js b/node_modules/whatsapp-web.js/src/structures/GroupChat.js
+index fd4e16a..7398529 100644
+--- a/node_modules/whatsapp-web.js/src/structures/GroupChat.js
++++ b/node_modules/whatsapp-web.js/src/structures/GroupChat.js
+@@ -274,7 +274,7 @@ class GroupChat extends Chat {
+     async setDescription(description) {
+         const success = await this.client.pupPage.evaluate(async (chatId, description) => {
+             const chatWid = window.Store.WidFactory.createWid(chatId);
+-            let descId = window.Store.GroupMetadata.get(chatWid).descId;
++            let descId = window.Store.GroupMetadata?.get(chatWid)?.descId;
+             let newId = await window.Store.MsgKey.newId();
+             try {
+                 await window.Store.GroupUtils.setGroupDescription(chatWid, description, newId, descId);
+diff --git a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
+index 54f9caf..02109df 100644
+--- a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
++++ b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
+@@ -590,7 +590,11 @@ exports.LoadUtils = () => {
+         if (chat.groupMetadata) {
+             model.isGroup = true;
+             const chatWid = window.Store.WidFactory.createWid(chat.id._serialized);
+-            await window.Store.GroupMetadata.update(chatWid);
++            try {
++                if (window.Store.GroupMetadata && typeof window.Store.GroupMetadata.update === 'function') {
++                    await window.Store.GroupMetadata.update(chatWid);
++                }
++            } catch (_) {}
+             chat.groupMetadata.participants._models
+                 .filter(x => x.id?._serialized?.endsWith('@lid'))
+                 .forEach(x => x.contact?.phoneNumber && (x.id = x.contact.phoneNumber));
+@@ -599,7 +603,11 @@ exports.LoadUtils = () => {
+         }
+ 
+         if (chat.newsletterMetadata) {
+-            await window.Store.NewsletterMetadataCollection.update(chat.id);
++            try {
++                if (window.Store.NewsletterMetadataCollection && typeof window.Store.NewsletterMetadataCollection.update === 'function') {
++                    await window.Store.NewsletterMetadataCollection.update(chat.id);
++                }
++            } catch (_) {}
+             model.channelMetadata = chat.newsletterMetadata.serialize();
+             model.channelMetadata.createdAtTs = chat.newsletterMetadata.creationTime;
+         }

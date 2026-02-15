@@ -1,4 +1,5 @@
 // server.js
+require('dotenv').config();
 const express = require('express');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
@@ -58,6 +59,12 @@ const limiter = rateLimit({
   message: { ok: false, error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    // Don't count QR/connection endpoints (qr-image auto-refreshes every 3s)
+    const pathname = (req.originalUrl || req.url || '').split('?')[0];
+    return pathname === '/api/qr' || pathname === '/api/qr-image' || pathname === '/api/qr-stream' ||
+      pathname === '/api/health';
+  },
 });
 
 // Stricter rate limiting for message sending endpoints (more conservative to avoid detection)
@@ -71,6 +78,7 @@ const sendMessageLimiter = rateLimit({
 
 app.use('/api/', limiter); // Apply to all API routes
 app.use('/send-group', sendMessageLimiter);
+app.use('/send-contact', sendMessageLimiter);
 
 
 
@@ -181,6 +189,8 @@ let currentQRCode = null;
 const qrCodeListeners = new Set(); // Use Set for better performance
 let isLoggingOut = false; // Flag to prevent concurrent logout operations
 let isClientDestroyed = false; // Flag to track if client is being destroyed
+let lastNotReadyLog = 0; // Throttle "client not ready" logs
+let lastProtocolErrorLog = 0; // Throttle ProtocolError logs
 
 // ============================================
 // ANTI-DETECTION SYSTEM (Prevent WhatsApp logout)
@@ -210,14 +220,6 @@ let cooldownUntil = 0;
 // Message history tracking (to detect patterns)
 const messageHistory = [];
 const MAX_HISTORY_SIZE = 50; // Keep last 50 messages
-
-// Cleanup old history entries periodically to prevent memory leaks
-setInterval(() => {
-  if (messageHistory.length > MAX_HISTORY_SIZE) {
-    const removed = messageHistory.splice(0, messageHistory.length - MAX_HISTORY_SIZE);
-    // Silently cleanup - no need to log every cleanup
-  }
-}, 5 * 60 * 1000); // Check every 5 minutes
 
 // Generate human-like random delay
 function getHumanDelay(hasMedia = false) {
@@ -417,22 +419,26 @@ app.use(express.static('public', {
   lastModified: true
 }));
 
-// Optional: Enable API key authentication for security
-// Uncomment the following lines to require X-API-Key header:
-// const { apiKeyAuth } = require('./middleware');
-// app.use(apiKeyAuth);
+// API key authentication (required when API_KEY is set in .env)
+const { apiKeyAuth } = require('./middleware');
+app.use(apiKeyAuth);
 
 // Client configuration
 const clientConfig = {
   authStrategy: new LocalAuth({ clientId: "my-instance" }),
+  // Use 'local' cache - 'none' can fetch versions WhatsApp rejects for linking
+  webVersionCache: { type: 'local' },
+  // Modern Chrome user agent (helps avoid "could not link device" in some cases)
+  userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   puppeteer: {
-    // If running on server you may need some flags; be careful with headless on some servers
     headless: true,
+    ...(process.env.PUPPETEER_EXECUTABLE_PATH && { executablePath: process.env.PUPPETEER_EXECUTABLE_PATH }),
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      '--single-process'
+      '--disable-gpu',
+      '--disable-software-rasterizer'
     ]
   }
 };
@@ -442,9 +448,11 @@ let client = new Client(clientConfig);
 
 // Setup client event handlers
 function setupClientEvents() {
+  client.on('authenticated', () => {});
   client.on('qr', async (qr) => {
-  console.log('--- Scan this QR with your WhatsApp phone ---');
-  qrcode.generate(qr, { small: true });
+    console.log('--- Scan this QR with your WhatsApp phone ---');
+    console.log('Web view: http://localhost:' + (process.env.PORT || 4000) + '/api/qr-image');
+    qrcode.generate(qr, { small: true });
     
     // Generate QR code as data URL for web dashboard
     try {
@@ -545,27 +553,66 @@ function reinitializeClient() {
     console.log('Skipping reinitialize - logout in progress or client destroyed');
     return;
   }
-  
+
   try {
     console.log('Reinitializing WhatsApp client...');
     isClientDestroyed = true; // Prevent new requests during reinit
-    
+
     // Destroy existing client if it exists
     if (client) {
       client.destroy().catch(err => {
         console.warn('Error destroying old client during reinit:', err.message);
       });
     }
-    
+
     // Create new client instance
     client = new Client(clientConfig);
     setupClientEvents();
     client.initialize();
-    
+
     console.log('Client reinitialization started. Waiting for QR code or connection...');
   } catch (err) {
     console.error('Error reinitializing client:', err);
     isClientDestroyed = false;
+  }
+}
+
+/**
+ * Force a fresh QR by clearing saved session and reinitializing (use when stuck "restoring" or QR never appears)
+ */
+async function forceNewQR() {
+  if (isLoggingOut || isClientDestroyed) {
+    console.log('Skipping forceNewQR - logout in progress or client destroyed');
+    return { ok: false, error: 'Please wait, operation in progress.' };
+  }
+  try {
+    console.log('Force new QR: clearing session and reinitializing...');
+    isClientDestroyed = true;
+    currentQRCode = null;
+    notifyQRListeners({ qr: null, hasQR: false, connected: false });
+
+    if (client) {
+      client.destroy().catch(() => {});
+      client = null;
+    }
+
+    const cleared = await clearAuthSession();
+    if (!cleared) {
+      isClientDestroyed = false;
+      return { ok: false, error: 'Failed to clear session folder.' };
+    }
+
+    // New client with fresh auth (no saved session = will emit QR)
+    client = new Client(clientConfig);
+    setupClientEvents();
+    client.initialize();
+    isClientDestroyed = false;
+    console.log('Client reinitialized. QR code should appear shortly.');
+    return { ok: true, message: 'Session cleared. QR code will appear in 15–60 seconds.' };
+  } catch (err) {
+    console.error('Error in forceNewQR:', err);
+    isClientDestroyed = false;
+    return { ok: false, error: err.message || 'Failed to force new QR.' };
   }
 }
 
@@ -600,7 +647,10 @@ app.get('/list-groups', async (req, res) => {
 
     // More thorough client state check
     if (!client) {
-      console.log('Groups request: client is null');
+      if (Date.now() - lastNotReadyLog > 60000) {
+        lastNotReadyLog = Date.now();
+        console.log(currentQRCode ? 'Scan QR code at /api/qr-image' : 'Restoring session... Please wait.');
+      }
       return res.status(503).json({ 
         ok: false, 
         error: 'WhatsApp client not initialized. Please wait...' 
@@ -608,7 +658,10 @@ app.get('/list-groups', async (req, res) => {
     }
 
     if (!client.info) {
-      console.log('Groups request: client.info is null');
+      if (Date.now() - lastNotReadyLog > 60000) {
+        lastNotReadyLog = Date.now();
+        console.log(currentQRCode ? 'Scan QR code at /api/qr-image' : 'Restoring session... Please wait.');
+      }
       return res.status(503).json({ 
         ok: false, 
         error: 'WhatsApp client not ready yet. Please wait for connection...' 
@@ -708,7 +761,10 @@ app.get('/list-contacts', async (req, res) => {
 
     // More thorough client state check
     if (!client) {
-      console.log('Contacts request: client is null');
+      if (Date.now() - lastNotReadyLog > 60000) {
+        lastNotReadyLog = Date.now();
+        console.log(currentQRCode ? 'Scan QR code at /api/qr-image' : 'Restoring session... Please wait.');
+      }
       return res.status(503).json({ 
         ok: false, 
         error: 'WhatsApp client not initialized. Please wait...' 
@@ -716,7 +772,10 @@ app.get('/list-contacts', async (req, res) => {
     }
 
     if (!client.info) {
-      console.log('Contacts request: client.info is null');
+      if (Date.now() - lastNotReadyLog > 60000) {
+        lastNotReadyLog = Date.now();
+        console.log(currentQRCode ? 'Scan QR code at /api/qr-image' : 'Restoring session... Please wait.');
+      }
       return res.status(503).json({ 
         ok: false, 
         error: 'WhatsApp client not ready yet. Please wait for connection...' 
@@ -935,7 +994,7 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
       // Sanitize filename
       const safeFilename = filename ? sanitizeFilename(filename) : 'file';
       
-      messageToSend = MessageMedia.fromBase64(media, mimetype || 'application/octet-stream', safeFilename);
+      messageToSend = new MessageMedia(mimetype || 'application/octet-stream', media, safeFilename);
       if (message) {
         messageToSend.caption = message;
       }
@@ -956,7 +1015,7 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
       await queueMessage(groupId, message, hasMedia, async () => {
         // Send message and get chat info in parallel
         const [sent, chat] = await Promise.allSettled([
-          client.sendMessage(groupId, messageToSend),
+          client.sendMessage(groupId, messageToSend, { sendSeen: false }),
           client.getChatById(groupId).catch(() => null)
         ]);
         
@@ -1002,10 +1061,8 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
         error: 'WhatsApp session is being reset. Please try again.' 
       });
     }
-    // Security: Don't expose detailed errors in production
-    const errorMessage = process.env.NODE_ENV === 'development' 
-      ? err.message || 'Failed to send message'
-      : 'Failed to send message';
+    // Return actual error for debugging (WhatsApp errors like "Number not on WhatsApp" are user-actionable)
+    const errorMessage = (err && err.message) ? String(err.message) : 'Failed to send message';
     
     res.status(500).json({ ok: false, error: errorMessage });
   }
@@ -1100,7 +1157,7 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
       // Sanitize filename
       const safeFilename = filename ? sanitizeFilename(filename) : 'file';
       
-      messageToSend = MessageMedia.fromBase64(media, mimetype || 'application/octet-stream', safeFilename);
+      messageToSend = new MessageMedia(mimetype || 'application/octet-stream', media, safeFilename);
       if (message) {
         messageToSend.caption = message;
       }
@@ -1121,7 +1178,7 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
       await queueMessage(contactId, message, hasMedia, async () => {
         // Send message and get chat info in parallel
         const [sent, chat] = await Promise.allSettled([
-          client.sendMessage(contactId, messageToSend),
+          client.sendMessage(contactId, messageToSend, { sendSeen: false }),
           client.getChatById(contactId).catch(() => null)
         ]);
         
@@ -1167,10 +1224,8 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
         error: 'WhatsApp session is being reset. Please try again.' 
       });
     }
-    // Security: Don't expose detailed errors in production
-    const errorMessage = process.env.NODE_ENV === 'development' 
-      ? err.message || 'Failed to send message'
-      : 'Failed to send message';
+    // Return actual error (WhatsApp errors like "Number not on WhatsApp" are user-actionable)
+    const errorMessage = (err && err.message) ? String(err.message) : 'Failed to send message';
     
     res.status(500).json({ ok: false, error: errorMessage });
   }
@@ -1272,11 +1327,15 @@ app.post('/api/reset-list', async (req, res) => {
  * GET /status
  */
 app.get('/status', (req, res) => {
+  const ready = !!(client && client.info && !isClientDestroyed && !isLoggingOut);
+  const hasClient = !!client;
+  const restoring = hasClient && !client.info && !isLoggingOut && !isClientDestroyed && !currentQRCode;
   res.json({
     ok: true,
-    ready: !!(client && client.info && !isClientDestroyed),
+    ready,
+    restoring,
     isLoggingOut: isLoggingOut,
-    info: (client && client.info && !isClientDestroyed) ? {
+    info: (client && client.info && !isClientDestroyed && !isLoggingOut) ? {
       wid: client.info.wid.user,
       pushname: client.info.pushname
     } : null,
@@ -1302,6 +1361,29 @@ app.get('/api/qr', (req, res) => {
     ready: !!(client && client.info && !isClientDestroyed),
     isLoggingOut: isLoggingOut
   });
+});
+
+/**
+ * Get QR code as image (for direct viewing/refresh)
+ * GET /api/qr-image - Open in new tab if dashboard QR won't load
+ */
+app.get('/api/qr-image', (req, res) => {
+  if (!currentQRCode) {
+    res.setHeader('Content-Type', 'text/html');
+    return res.status(404).send(`
+      <html><head><title>QR Code</title><meta http-equiv="refresh" content="3"></head>
+      <body style="font-family:sans-serif;text-align:center;padding:40px;">
+        <h2>QR code not ready yet</h2>
+        <p>Waiting for WhatsApp to generate QR code... This page will auto-refresh every 3 seconds.</p>
+        <p><a href="/api/qr-image">Refresh now</a> | <a href="/">Back to Dashboard</a></p>
+      </body></html>
+    `);
+  }
+  const base64Data = currentQRCode.replace(/^data:image\/png;base64,/, '');
+  const imgBuffer = Buffer.from(base64Data, 'base64');
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.send(imgBuffer);
 });
 
 /**
@@ -1469,6 +1551,24 @@ app.post('/api/logout', async (req, res) => {
   }
 });
 
+/**
+ * Force a new QR code (clear saved session and reinitialize)
+ * Use when stuck on "QR code not available yet" or "Restoring session..."
+ * POST /api/force-qr
+ */
+app.post('/api/force-qr', async (req, res) => {
+  try {
+    const result = await forceNewQR();
+    if (!result.ok) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  } catch (err) {
+    console.error('Error in /api/force-qr:', err);
+    res.status(500).json({ ok: false, error: err.message || 'Failed to force new QR.' });
+  }
+});
+
 // ============================================
 // SECURITY & OPTIMIZATION MIDDLEWARE
 // ============================================
@@ -1559,8 +1659,15 @@ process.on('uncaughtException', (err) => {
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // Don't exit on unhandled rejection, just log it
+  const msg = reason?.message || String(reason);
+  if (msg.includes('Target closed') || msg.includes('Protocol error') || (reason?.name === 'ProtocolError')) {
+    if (Date.now() - lastProtocolErrorLog > 30000) {
+      lastProtocolErrorLog = Date.now();
+      console.log('Browser session reset (normal during reconnect). If QR not showing, restart the server.');
+    }
+    return;
+  }
+  console.error('Unhandled Rejection:', reason);
 });
 
 // ============================================
@@ -1571,22 +1678,17 @@ process.on('unhandledRejection', (reason, promise) => {
 setInterval(() => {
   const now = Date.now();
   const maxAge = 24 * 60 * 60 * 1000; // 24 hours
-  
-  // Remove messages older than 24 hours
   const initialLength = messageHistory.length;
+
+  // Remove messages older than 24 hours (iterate backwards for safe splice)
   for (let i = messageHistory.length - 1; i >= 0; i--) {
     if (now - messageHistory[i].timestamp > maxAge) {
       messageHistory.splice(i, 1);
     }
   }
-  
-  // Also ensure we don't exceed max size
+  // Ensure we don't exceed max size
   if (messageHistory.length > MAX_HISTORY_SIZE) {
     messageHistory.splice(0, messageHistory.length - MAX_HISTORY_SIZE);
-  }
-  
-  if (messageHistory.length < initialLength) {
-    console.log(`Cleaned up ${initialLength - messageHistory.length} old message history entries`);
   }
 }, 60 * 60 * 1000); // Run every hour
 
@@ -1594,7 +1696,7 @@ setInterval(() => {
 // START SERVER
 // ============================================
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // Security warning for production

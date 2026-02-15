@@ -1,0 +1,2 @@
+# Keeps patches/ in the repo so Dockerfile COPY patches/ succeeds.
+# Add patch files (e.g. from patch-package) here.

@@ -8,9 +8,10 @@ node_modules/
 # Uploaded files
 uploads/
 
-# Environment variables
+# Environment variables (NEVER commit - contains secrets)
 .env
-.env.local
+.env.*
+!.env.example
 
 # Logs
 *.log
@@ -25,4 +26,5 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+.cursor
 

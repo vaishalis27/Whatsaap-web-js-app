@@ -41,13 +41,13 @@ npm start
 3. Open WhatsApp on your phone → Settings → Linked devices → Link a device
 4. Scan the QR code
 5. The session will be saved automatically (no need to scan again on restart)
-6. Open your browser and go to `http://localhost:3000` to access the dashboard
+6. Open your browser and go to `http://localhost:4000` to access the dashboard
 
 ## Web Dashboard
 
 After starting the server, open your browser and navigate to:
 ```
-http://localhost:3000
+http://localhost:4000
 ```
 
 The dashboard provides:
@@ -64,7 +64,7 @@ The dashboard is fully responsive and works on desktop, tablet, and mobile devic
 
 ### Quick API Reference
 
-**Base URL:** `http://localhost:3000`
+**Base URL:** `http://localhost:4000` (default port; override via `PORT` env)
 
 **Available Endpoints:**
 - `GET /api/health` - Health check
@@ -82,7 +82,7 @@ The dashboard is fully responsive and works on desktop, tablet, and mobile devic
 
 ```bash
 # Send a message to a group
-curl -X POST http://localhost:3000/send-group \
+curl -X POST http://localhost:4000/send-group \
   -H "Content-Type: application/json" \
   -d '{
     "groupId": "120363123456789012@g.us",
@@ -114,14 +114,19 @@ Alternatively:
 
 ## Server Deployment
 
-🚀 **Complete Deployment Guide**: See [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) for detailed instructions on deploying to Railway, Render, DigitalOcean, AWS, and more.
+🚀 **Complete Deployment Guides:**
+- **Hostinger VPS**: See [HOSTINGER_DEPLOYMENT.md](./HOSTINGER_DEPLOYMENT.md) – deploy on Hostinger and use from another app (API key, CORS, PM2)
+- **Oracle Cloud VPS** (⭐ Recommended for FREE long-term): See [ORACLE_CLOUD_SETUP.md](./ORACLE_CLOUD_SETUP.md) - Always free, 24/7, perfect for production
+- **Other Platforms**: See [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) for Railway, Render, DigitalOcean, AWS, and more
 
 ### ⚠️ Important: Platform Compatibility
 
 **❌ Vercel/Netlify Functions**: NOT compatible - This app requires long-running processes, persistent storage, and WebSocket connections. Serverless platforms won't work.
 
 **✅ Recommended Platforms:**
-- **Render** (100% FREE) - No credit card needed, forever free tier
+- **Hostinger VPS** – Full control, use from another app via API key; see [HOSTINGER_DEPLOYMENT.md](./HOSTINGER_DEPLOYMENT.md)
+- **Oracle Cloud VPS** (⭐ BEST FREE) - Always free, 24/7, 6-24GB RAM, no spin-down
+- **Render** (100% FREE) - No credit card needed, forever free tier (spins down after 15 min)
 - **Railway** (Easiest) - $5 credit/month, one-click deployment
 - **DigitalOcean App Platform** - Reliable, $5/month
 - **AWS EC2/Lightsail** - Full control, scalable (12 months free tier)
@@ -185,7 +190,7 @@ app.use((req, res, next) => {
 
 Create a `.env` file:
 ```
-PORT=3000
+PORT=4000
 API_KEY=your-secret-api-key-here
 ```
 
@@ -274,7 +279,7 @@ MEDIA_DELAY_MULTIPLIER=1.5
 You can check the anti-detection system status via the `/status` endpoint:
 
 ```bash
-curl http://localhost:3000/status
+curl http://localhost:4000/status
 ```
 
 Response includes:
