@@ -114,33 +114,54 @@ Alternatively:
 
 ## Server Deployment
 
-🚀 **Complete Deployment Guides:**
-- **Hostinger VPS**: See [HOSTINGER_DEPLOYMENT.md](./HOSTINGER_DEPLOYMENT.md) – deploy on Hostinger and use from another app (API key, CORS, PM2)
-- **Oracle Cloud VPS** (⭐ Recommended for FREE long-term): See [ORACLE_CLOUD_SETUP.md](./ORACLE_CLOUD_SETUP.md) - Always free, 24/7, perfect for production
-- **Other Platforms**: See [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) for Railway, Render, DigitalOcean, AWS, and more
+🚀 **Complete Deployment Guide**: See [HOSTINGER_DEPLOYMENT.md](./HOSTINGER_DEPLOYMENT.md) for detailed instructions on deploying to Hostinger VPS.
+
+### Quick Deploy to Hostinger VPS
+
+This application is optimized for deployment on **Hostinger VPS**. We provide:
+
+1. **Automated Deployment Script** - `deploy-hostinger.sh` handles everything automatically
+2. **Step-by-Step Guide** - [HOSTINGER_DEPLOYMENT.md](./HOSTINGER_DEPLOYMENT.md) with complete instructions
+3. **Manual Deployment** - Follow the guide for full control over each step
+
+**Automated Deployment (Recommended):**
+```bash
+# On your Hostinger VPS:
+git clone https://github.com/vaishalis27/Whatsaap-web-js-app.git
+cd Whatsaap-web-js-app
+chmod +x deploy-hostinger.sh
+./deploy-hostinger.sh
+```
+
+The script will:
+- Install Node.js 18 LTS
+- Install Chromium and all dependencies 
+- Install PM2 for process management
+- Clone/update repository
+- Install npm dependencies
+- Configure environment variables
+- Set up firewall (UFW)
+- Create swap space (2GB)
+- Start the application
+
+**Resource Requirements:**
+- ✅ Minimum: 1 CPU, 4GB RAM (comfortable for single WhatsApp session)
+- ✅ Recommended: Add 2GB swap space for safety
+- ✅ Network: Public IP address and open ports (22, 80, 443, 4000)
+
+### After Deployment
+
+1. **Access the dashboard**: `http://YOUR_VPS_IP:4000`
+2. **Scan QR code** to link WhatsApp
+3. **(Optional) Set up nginx with SSL** - See [HOSTINGER_DEPLOYMENT.md](./HOSTINGER_DEPLOYMENT.md) for HTTPS setup
 
 ### ⚠️ Important: Platform Compatibility
 
-**❌ Vercel/Netlify Functions**: NOT compatible - This app requires long-running processes, persistent storage, and WebSocket connections. Serverless platforms won't work.
+**❌ Vercel/Netlify Functions**: NOT compatible - This app requires long-running processes, persistent storage, and WebSocket connections.
 
-**✅ Recommended Platforms:**
-- **Hostinger VPS** – Full control, use from another app via API key; see [HOSTINGER_DEPLOYMENT.md](./HOSTINGER_DEPLOYMENT.md)
-- **Oracle Cloud VPS** (⭐ BEST FREE) - Always free, 24/7, 6-24GB RAM, no spin-down
-- **Render** (100% FREE) - No credit card needed, forever free tier (spins down after 15 min)
-- **Railway** (Easiest) - $5 credit/month, one-click deployment
-- **DigitalOcean App Platform** - Reliable, $5/month
-- **AWS EC2/Lightsail** - Full control, scalable (12 months free tier)
-
-### Quick Deploy to Render (100% FREE)
-
-1. Push your code to GitHub
-2. Go to [render.com](https://render.com) and sign up (no credit card needed)
-3. Click "New" → "Web Service"
-4. Connect your GitHub repository
-5. Render auto-detects and deploys
-6. Get your public URL (e.g., `https://your-app.onrender.com`) and use it in your other projects!
-
-**Note:** Render's free tier sleeps after 15 min inactivity but wakes automatically on first request.
+**✅ Compatible Platforms:**
+- **Hostinger VPS** (Recommended) - Full control, optimized for this deployment
+- **Any Linux VPS** with 4GB+ RAM - DigitalOcean, Linode, AWS EC2, Oracle Cloud, etc.
 
 ### Requirements
 - Node.js 16+
