@@ -1,4 +1,4 @@
-// server.js
+// server.js - v1.0.1 (Fixed MessageMedia incompatibility)
 require('dotenv').config();
 const express = require('express');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
@@ -152,32 +152,32 @@ const handleFileUpload = (req, res, next) => {
       // Handle multer errors
       if (err instanceof multer.MulterError) {
         if (err.code === 'LIMIT_FILE_SIZE') {
-          return res.status(400).json({ 
-            ok: false, 
-            error: 'File too large. Maximum size is 100MB.' 
+          return res.status(400).json({
+            ok: false,
+            error: 'File too large. Maximum size is 100MB.'
           });
         }
         if (err.code === 'LIMIT_FILE_COUNT') {
-          return res.status(400).json({ 
-            ok: false, 
-            error: 'Too many files. Only one file allowed.' 
+          return res.status(400).json({
+            ok: false,
+            error: 'Too many files. Only one file allowed.'
           });
         }
-        return res.status(400).json({ 
-          ok: false, 
-          error: `Upload error: ${err.message}` 
+        return res.status(400).json({
+          ok: false,
+          error: `Upload error: ${err.message}`
         });
       }
       // Handle file filter errors
       if (err.message && err.message.includes('File type not allowed')) {
-        return res.status(400).json({ 
-          ok: false, 
-          error: err.message 
+        return res.status(400).json({
+          ok: false,
+          error: err.message
         });
       }
-      return res.status(400).json({ 
-        ok: false, 
-        error: 'File upload error' 
+      return res.status(400).json({
+        ok: false,
+        error: 'File upload error'
       });
     }
     next();
@@ -223,14 +223,14 @@ const MAX_HISTORY_SIZE = 50; // Keep last 50 messages
 
 // Generate human-like random delay
 function getHumanDelay(hasMedia = false) {
-  const baseDelay = ANTI_DETECTION_CONFIG.minDelay + 
+  const baseDelay = ANTI_DETECTION_CONFIG.minDelay +
     Math.random() * (ANTI_DETECTION_CONFIG.maxDelay - ANTI_DETECTION_CONFIG.minDelay);
-  
+
   // Add extra delay for media files
-  const delay = hasMedia 
-    ? baseDelay * ANTI_DETECTION_CONFIG.mediaDelayMultiplier 
+  const delay = hasMedia
+    ? baseDelay * ANTI_DETECTION_CONFIG.mediaDelayMultiplier
     : baseDelay;
-  
+
   // Round to nearest 100ms for more natural timing
   return Math.round(delay / 100) * 100;
 }
@@ -238,27 +238,27 @@ function getHumanDelay(hasMedia = false) {
 // Check if we need to wait (cooldown or rate limiting)
 function shouldWait() {
   const now = Date.now();
-  
+
   // Check cooldown period
   if (now < cooldownUntil) {
     return cooldownUntil - now;
   }
-  
+
   // Check if we've sent too many messages recently
   if (messageCountInWindow >= ANTI_DETECTION_CONFIG.maxMessagesBeforeCooldown) {
     cooldownUntil = now + ANTI_DETECTION_CONFIG.cooldownPeriod;
     messageCountInWindow = 0;
     return ANTI_DETECTION_CONFIG.cooldownPeriod;
   }
-  
+
   // Check minimum delay since last message
   const timeSinceLastMessage = now - lastMessageTime;
   const requiredDelay = getHumanDelay();
-  
+
   if (timeSinceLastMessage < requiredDelay) {
     return requiredDelay - timeSinceLastMessage;
   }
-  
+
   return 0;
 }
 
@@ -270,7 +270,7 @@ function addToHistory(recipientId, message, hasMedia) {
     hasMedia,
     timestamp: Date.now()
   });
-  
+
   // Keep history size manageable
   if (messageHistory.length > MAX_HISTORY_SIZE) {
     messageHistory.shift();
@@ -282,21 +282,21 @@ function detectSuspiciousPattern(recipientId, message) {
   const recentMessages = messageHistory
     .filter(m => Date.now() - m.timestamp < 60000) // Last minute
     .filter(m => m.message === message.substring(0, 50));
-  
+
   // If same message sent 3+ times in last minute, it's suspicious
   if (recentMessages.length >= 3) {
     return true;
   }
-  
+
   // Check for rapid sending to same recipient
   const sameRecipient = messageHistory
     .filter(m => Date.now() - m.timestamp < 10000) // Last 10 seconds
     .filter(m => m.recipientId === recipientId);
-  
+
   if (sameRecipient.length >= 3) {
     return true;
   }
-  
+
   return false;
 }
 
@@ -305,28 +305,28 @@ async function processMessageQueue() {
   if (isProcessingQueue || messageQueue.length === 0) {
     return;
   }
-  
+
   isProcessingQueue = true;
-  
+
   while (messageQueue.length > 0) {
     const queueItem = messageQueue[0];
-    
+
     // Check if we need to wait
     const waitTime = shouldWait();
     if (waitTime > 0) {
-      console.log(`⏳ Anti-detection: Waiting ${Math.round(waitTime/1000)}s before sending next message...`);
+      console.log(`⏳ Anti-detection: Waiting ${Math.round(waitTime / 1000)}s before sending next message...`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
-    
+
     // Check for suspicious patterns
     if (detectSuspiciousPattern(queueItem.recipientId, queueItem.message || '')) {
       console.warn('⚠️  Suspicious pattern detected! Adding extra delay...');
       await new Promise(resolve => setTimeout(resolve, ANTI_DETECTION_CONFIG.cooldownPeriod));
     }
-    
+
     // Remove from queue
     messageQueue.shift();
-    
+
     // Execute the send function
     try {
       const delay = getHumanDelay(queueItem.hasMedia);
@@ -334,24 +334,24 @@ async function processMessageQueue() {
         // Only add delay if we've sent a message before
         await new Promise(resolve => setTimeout(resolve, delay));
       }
-      
+
       await queueItem.sendFunction();
-      
+
       // Update tracking
       lastMessageTime = Date.now();
       messageCountInWindow++;
       addToHistory(queueItem.recipientId, queueItem.message || '', queueItem.hasMedia);
-      
+
       // Resolve the promise
       if (queueItem.resolve) {
         queueItem.resolve();
       }
-      
+
       // Reset message count after cooldown period
       setTimeout(() => {
         messageCountInWindow = Math.max(0, messageCountInWindow - 1);
       }, ANTI_DETECTION_CONFIG.cooldownPeriod);
-      
+
     } catch (error) {
       console.error('Error processing queued message:', error);
       if (queueItem.reject) {
@@ -359,7 +359,7 @@ async function processMessageQueue() {
       }
     }
   }
-  
+
   isProcessingQueue = false;
 }
 
@@ -374,7 +374,7 @@ function queueMessage(recipientId, message, hasMedia, sendFunction) {
       resolve,
       reject
     });
-    
+
     // Start processing queue if not already processing
     processMessageQueue().catch(console.error);
   });
@@ -448,15 +448,15 @@ let client = new Client(clientConfig);
 
 // Setup client event handlers
 function setupClientEvents() {
-  client.on('authenticated', () => {});
+  client.on('authenticated', () => { });
   client.on('qr', async (qr) => {
     console.log('--- Scan this QR with your WhatsApp phone ---');
     console.log('Web view: http://localhost:' + (process.env.PORT || 4000) + '/api/qr-image');
     qrcode.generate(qr, { small: true });
-    
+
     // Generate QR code as data URL for web dashboard
     try {
-      currentQRCode = await QRCode.toDataURL(qr, { 
+      currentQRCode = await QRCode.toDataURL(qr, {
         width: 400,
         margin: 2,
         color: {
@@ -464,38 +464,38 @@ function setupClientEvents() {
           light: '#FFFFFF'
         }
       });
-      
+
       // Notify all SSE listeners (with error handling)
       notifyQRListeners({ qr: currentQRCode, hasQR: true });
     } catch (err) {
       console.error('Error generating QR code image:', err);
     }
-});
+  });
 
-client.on('ready', () => {
-  console.log('WhatsApp client ready.');
+  client.on('ready', () => {
+    console.log('WhatsApp client ready.');
     // Clear QR code when connected
     currentQRCode = null;
     // Reset flags when client is ready
     isClientDestroyed = false;
     isLoggingOut = false;
     notifyQRListeners({ qr: null, hasQR: false, connected: true });
-});
+  });
 
-client.on('auth_failure', msg => {
-  console.error('Auth failure:', msg);
+  client.on('auth_failure', msg => {
+    console.error('Auth failure:', msg);
     notifyQRListeners({ qr: null, hasQR: false, connected: false, authFailure: true });
-});
+  });
 
-client.on('disconnected', (reason) => {
-  console.log('Client disconnected:', reason);
+  client.on('disconnected', (reason) => {
+    console.log('Client disconnected:', reason);
     currentQRCode = null;
     // Reset flags if disconnected (not during logout)
     if (!isLoggingOut) {
       isClientDestroyed = false;
     }
     notifyQRListeners({ qr: null, hasQR: false, connected: false });
-    
+
     // Auto-reconnect if session was closed unexpectedly (not during logout)
     if (!isLoggingOut && (reason === 'NAVIGATION' || reason === 'CONFLICT' || reason === 'LOGGED_OUT')) {
       console.log('Session closed unexpectedly. Attempting to reinitialize...');
@@ -505,12 +505,12 @@ client.on('disconnected', (reason) => {
         }
       }, 3000); // Wait 3 seconds before reconnecting
     }
-});
+  });
 
-client.on('message', msg => {
-  // Optional: log incoming messages for debugging
-  // console.log('Message received:', msg.from, msg.body);
-});
+  client.on('message', msg => {
+    // Optional: log incoming messages for debugging
+    // console.log('Message received:', msg.from, msg.body);
+  });
 }
 
 // Setup initial client events
@@ -520,7 +520,7 @@ setupClientEvents();
 function notifyQRListeners(data) {
   const message = `data: ${JSON.stringify(data)}\n\n`;
   const deadListeners = [];
-  
+
   qrCodeListeners.forEach(res => {
     try {
       res.write(message);
@@ -529,7 +529,7 @@ function notifyQRListeners(data) {
       deadListeners.push(res);
     }
   });
-  
+
   // Remove dead listeners
   deadListeners.forEach(listener => qrCodeListeners.delete(listener));
 }
@@ -592,7 +592,7 @@ async function forceNewQR() {
     notifyQRListeners({ qr: null, hasQR: false, connected: false });
 
     if (client) {
-      client.destroy().catch(() => {});
+      client.destroy().catch(() => { });
       client = null;
     }
 
@@ -623,8 +623,8 @@ client.initialize();
  * GET /api/health
  */
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    ok: true, 
+  res.json({
+    ok: true,
     message: 'WhatsApp API is running',
     status: client.info ? 'connected' : 'connecting'
   });
@@ -639,9 +639,9 @@ app.get('/list-groups', async (req, res) => {
     // Check if client is being destroyed or logged out
     if (isClientDestroyed || isLoggingOut) {
       console.log('Groups request blocked: isClientDestroyed=', isClientDestroyed, 'isLoggingOut=', isLoggingOut);
-      return res.status(503).json({ 
-        ok: false, 
-        error: 'WhatsApp client is being reset. Please wait...' 
+      return res.status(503).json({
+        ok: false,
+        error: 'WhatsApp client is being reset. Please wait...'
       });
     }
 
@@ -651,9 +651,9 @@ app.get('/list-groups', async (req, res) => {
         lastNotReadyLog = Date.now();
         console.log(currentQRCode ? 'Scan QR code at /api/qr-image' : 'Restoring session... Please wait.');
       }
-      return res.status(503).json({ 
-        ok: false, 
-        error: 'WhatsApp client not initialized. Please wait...' 
+      return res.status(503).json({
+        ok: false,
+        error: 'WhatsApp client not initialized. Please wait...'
       });
     }
 
@@ -662,9 +662,9 @@ app.get('/list-groups', async (req, res) => {
         lastNotReadyLog = Date.now();
         console.log(currentQRCode ? 'Scan QR code at /api/qr-image' : 'Restoring session... Please wait.');
       }
-      return res.status(503).json({ 
-        ok: false, 
-        error: 'WhatsApp client not ready yet. Please wait for connection...' 
+      return res.status(503).json({
+        ok: false,
+        error: 'WhatsApp client not ready yet. Please wait for connection...'
       });
     }
 
@@ -673,7 +673,7 @@ app.get('/list-groups', async (req, res) => {
     try {
       chats = await Promise.race([
         client.getChats(),
-        new Promise((_, reject) => 
+        new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Timeout getting chats')), 30000)
         )
       ]);
@@ -685,8 +685,8 @@ app.get('/list-groups', async (req, res) => {
           console.log('Session closed detected. Attempting to reinitialize...');
           reinitializeClient();
         }
-        return res.status(503).json({ 
-          ok: false, 
+        return res.status(503).json({
+          ok: false,
           error: 'WhatsApp session closed. Reconnecting automatically. Please wait a moment and try again.',
           reconnecting: true
         });
@@ -702,10 +702,10 @@ app.get('/list-groups', async (req, res) => {
           // Validate group still exists by checking if we can access it
           const groupId = chat.id._serialized;
           if (groupId && groupId.endsWith('@g.us')) {
-            groups.push({ 
-              id: groupId, 
-              name: chat.name || 'Unnamed Group', 
-              participants: chat.participants?.length || null 
+            groups.push({
+              id: groupId,
+              name: chat.name || 'Unnamed Group',
+              participants: chat.participants?.length || null
             });
           }
         } catch (err) {
@@ -714,7 +714,7 @@ app.get('/list-groups', async (req, res) => {
         }
       }
     }
-    
+
     res.json({ ok: true, groups, count: groups.length });
   } catch (err) {
     console.error('Error listing groups:', err);
@@ -725,19 +725,19 @@ app.get('/list-groups', async (req, res) => {
         console.log('Session closed detected in error handler. Attempting to reinitialize...');
         reinitializeClient();
       }
-      return res.status(503).json({ 
-        ok: false, 
+      return res.status(503).json({
+        ok: false,
         error: 'WhatsApp session error. Reconnecting automatically. Please wait a moment and try again.',
         reconnecting: true
       });
     }
     // Security: Don't expose stack traces in production
-    const errorMessage = process.env.NODE_ENV === 'development' 
+    const errorMessage = process.env.NODE_ENV === 'development'
       ? err.message || 'Failed to list groups'
       : 'Failed to list groups';
-    
-    res.status(500).json({ 
-      ok: false, 
+
+    res.status(500).json({
+      ok: false,
       error: errorMessage,
       ...(process.env.NODE_ENV === 'development' && { details: err.stack })
     });
@@ -753,9 +753,9 @@ app.get('/list-contacts', async (req, res) => {
     // Check if client is being destroyed or logged out
     if (isClientDestroyed || isLoggingOut) {
       console.log('Contacts request blocked: isClientDestroyed=', isClientDestroyed, 'isLoggingOut=', isLoggingOut);
-      return res.status(503).json({ 
-        ok: false, 
-        error: 'WhatsApp client is being reset. Please wait...' 
+      return res.status(503).json({
+        ok: false,
+        error: 'WhatsApp client is being reset. Please wait...'
       });
     }
 
@@ -765,9 +765,9 @@ app.get('/list-contacts', async (req, res) => {
         lastNotReadyLog = Date.now();
         console.log(currentQRCode ? 'Scan QR code at /api/qr-image' : 'Restoring session... Please wait.');
       }
-      return res.status(503).json({ 
-        ok: false, 
-        error: 'WhatsApp client not initialized. Please wait...' 
+      return res.status(503).json({
+        ok: false,
+        error: 'WhatsApp client not initialized. Please wait...'
       });
     }
 
@@ -776,9 +776,9 @@ app.get('/list-contacts', async (req, res) => {
         lastNotReadyLog = Date.now();
         console.log(currentQRCode ? 'Scan QR code at /api/qr-image' : 'Restoring session... Please wait.');
       }
-      return res.status(503).json({ 
-        ok: false, 
-        error: 'WhatsApp client not ready yet. Please wait for connection...' 
+      return res.status(503).json({
+        ok: false,
+        error: 'WhatsApp client not ready yet. Please wait for connection...'
       });
     }
 
@@ -787,7 +787,7 @@ app.get('/list-contacts', async (req, res) => {
     try {
       chats = await Promise.race([
         client.getChats(),
-        new Promise((_, reject) => 
+        new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Timeout getting chats')), 30000)
         )
       ]);
@@ -799,8 +799,8 @@ app.get('/list-contacts', async (req, res) => {
           console.log('Session closed detected. Attempting to reinitialize...');
           reinitializeClient();
         }
-        return res.status(503).json({ 
-          ok: false, 
+        return res.status(503).json({
+          ok: false,
           error: 'WhatsApp session closed. Reconnecting automatically. Please wait a moment and try again.',
           reconnecting: true
         });
@@ -812,34 +812,34 @@ app.get('/list-contacts', async (req, res) => {
     // Also ensure the chat ID ends with @c.us (personal contact format)
     const contacts = [];
     const nonGroupChats = chats.filter(c => !c.isGroup);
-    
+
     console.log(`[Contacts] Total chats: ${chats.length}, Non-group chats: ${nonGroupChats.length}`);
-    
+
     for (const chat of chats) {
       try {
         // Must not be a group
         if (chat.isGroup) continue;
-        
+
         // Exclude "Note to Self" / "Saved Messages" chat
         if (chat.isMe) {
           console.log(`[Contacts] Skipping "Note to Self" chat: ${chat.id?._serialized || 'unknown'}`);
           continue;
         }
-        
+
         // Get chat ID
         const chatId = chat.id?._serialized || '';
         if (!chatId) {
           console.log(`[Contacts] Skipping chat with no ID:`, chat);
           continue;
         }
-        
+
         // Check if it's a personal contact (ends with @c.us)
         // Also accept chats that might not have the @c.us format but are not groups
         if (!chatId.endsWith('@c.us') && !chatId.includes('@')) {
           console.log(`[Contacts] Skipping chat with unexpected ID format: ${chatId}`);
           continue;
         }
-        
+
         // If it doesn't end with @c.us, check if it's a valid contact format
         if (!chatId.endsWith('@c.us')) {
           // Some contacts might have different formats, let's be more lenient
@@ -850,22 +850,22 @@ app.get('/list-contacts', async (req, res) => {
           // Accept other formats that might be contacts
           console.log(`[Contacts] Accepting contact with non-standard ID format: ${chatId}`);
         }
-        
+
         const userId = chat.id?.user || chatId.split('@')[0] || null;
         const contactName = chat.name || userId || 'Unknown';
-        
+
         contacts.push({
           id: chatId,
           name: contactName,
           number: userId || null
         });
-        
+
         console.log(`[Contacts] Added contact: ${contactName} (${chatId})`);
       } catch (err) {
         console.error(`[Contacts] Error processing chat:`, err, chat);
       }
     }
-    
+
     // Enhanced debug logging
     console.log(`[Contacts] Final result: ${contacts.length} contacts found`);
     if (contacts.length === 0 && nonGroupChats.length > 0) {
@@ -875,7 +875,7 @@ app.get('/list-contacts', async (req, res) => {
         console.log(`  - ID: ${chatId}, isMe: ${c.isMe}, isGroup: ${c.isGroup}, name: "${c.name || 'no-name'}"`);
       });
     }
-    
+
     res.json({ ok: true, contacts, count: contacts.length });
   } catch (err) {
     console.error('Error listing contacts:', err);
@@ -886,19 +886,19 @@ app.get('/list-contacts', async (req, res) => {
         console.log('Session closed detected in error handler. Attempting to reinitialize...');
         reinitializeClient();
       }
-      return res.status(503).json({ 
-        ok: false, 
+      return res.status(503).json({
+        ok: false,
         error: 'WhatsApp session error. Reconnecting automatically. Please wait a moment and try again.',
         reconnecting: true
       });
     }
     // Security: Don't expose stack traces in production
-    const errorMessage = process.env.NODE_ENV === 'development' 
+    const errorMessage = process.env.NODE_ENV === 'development'
       ? err.message || 'Failed to list contacts'
       : 'Failed to list contacts';
-    
-    res.status(500).json({ 
-      ok: false, 
+
+    res.status(500).json({
+      ok: false,
       error: errorMessage,
       ...(process.env.NODE_ENV === 'development' && { details: err.stack })
     });
@@ -914,19 +914,19 @@ app.get('/list-contacts', async (req, res) => {
 app.post('/send-group', handleFileUpload, async (req, res) => {
   // Handle multer errors gracefully
   if (req.fileValidationError) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: req.fileValidationError 
+    return res.status(400).json({
+      ok: false,
+      error: req.fileValidationError
     });
   }
   let uploadedFilePath = null;
-  
+
   try {
     // Quick validation checks first
     if (isClientDestroyed || isLoggingOut) {
-      return res.status(503).json({ 
-        ok: false, 
-        error: 'WhatsApp client is being reset. Please wait...' 
+      return res.status(503).json({
+        ok: false,
+        error: 'WhatsApp client is being reset. Please wait...'
       });
     }
 
@@ -940,33 +940,33 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
     const media = req.body.media ? String(req.body.media) : null;
     const mimetype = req.body.mimetype ? String(req.body.mimetype).trim() : null;
     const filename = req.body.filename ? String(req.body.filename).trim() : null;
-    
+
     // Validate groupId format
     if (!groupId) {
-      return res.status(400).json({ 
-        ok: false, 
-        error: 'groupId is required' 
+      return res.status(400).json({
+        ok: false,
+        error: 'groupId is required'
       });
     }
-    
+
     if (!validateGroupId(groupId)) {
       // Log the actual value for debugging (only in development)
       if (process.env.NODE_ENV === 'development') {
         console.log('Invalid groupId received:', JSON.stringify(groupId));
       }
-      return res.status(400).json({ 
-        ok: false, 
-        error: `Invalid groupId format. Received: "${groupId.substring(0, 50)}". Expected format: numbers-numbers@g.us (e.g., 123456789-123456789@g.us)` 
+      return res.status(400).json({
+        ok: false,
+        error: `Invalid groupId format. Received: "${groupId.substring(0, 50)}". Expected format: numbers-numbers@g.us (e.g., 123456789-123456789@g.us)`
       });
     }
-    
+
     // Sanitize message
     message = sanitizeMessage(message);
 
     // Prepare message/media in parallel with validation
     let messageToSend;
     let hasMedia = false;
-    
+
     if (req.file) {
       uploadedFilePath = req.file.path;
       messageToSend = MessageMedia.fromFilePath(uploadedFilePath);
@@ -977,23 +977,23 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
     } else if (media) {
       // Validate base64 media
       if (!validateBase64Media(media)) {
-        return res.status(400).json({ 
-          ok: false, 
-          error: 'Invalid base64 media format' 
+        return res.status(400).json({
+          ok: false,
+          error: 'Invalid base64 media format'
         });
       }
-      
+
       // Validate mimetype if provided
       if (mimetype && !ALLOWED_MIME_TYPES.includes(mimetype)) {
-      return res.status(400).json({ 
-        ok: false, 
-          error: `Invalid mimetype. Allowed types: ${ALLOWED_MIME_TYPES.join(', ')}` 
+        return res.status(400).json({
+          ok: false,
+          error: `Invalid mimetype. Allowed types: ${ALLOWED_MIME_TYPES.join(', ')}`
         });
       }
-      
+
       // Sanitize filename
       const safeFilename = filename ? sanitizeFilename(filename) : 'file';
-      
+
       messageToSend = new MessageMedia(mimetype || 'application/octet-stream', media, safeFilename);
       if (message) {
         messageToSend.caption = message;
@@ -1002,15 +1002,15 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
     } else if (message && message.trim()) {
       messageToSend = message;
     } else {
-      return res.status(400).json({ 
-        ok: false, 
-        error: 'Either message or file is required' 
+      return res.status(400).json({
+        ok: false,
+        error: 'Either message or file is required'
       });
     }
 
     // Queue message with anti-detection system
     let sentMessage, groupName = 'Group';
-    
+
     try {
       await queueMessage(groupId, message, hasMedia, async () => {
         // Send message and get chat info in parallel
@@ -1018,24 +1018,24 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
           client.sendMessage(groupId, messageToSend, { sendSeen: false }),
           client.getChatById(groupId).catch(() => null)
         ]);
-        
+
         // Handle results
         if (sent.status === 'rejected') {
           throw sent.reason;
         }
-        
+
         sentMessage = sent.value;
-        groupName = (chat.status === 'fulfilled' && chat.value && chat.value.isGroup) 
-          ? chat.value.name 
+        groupName = (chat.status === 'fulfilled' && chat.value && chat.value.isGroup)
+          ? chat.value.name
           : 'Group';
       });
     } catch (queueError) {
       throw queueError;
     }
-    
+
     // Send response
-    res.json({ 
-      ok: true, 
+    res.json({
+      ok: true,
       id: sentMessage.id._serialized,
       timestamp: sentMessage.timestamp,
       groupName: groupName,
@@ -1043,7 +1043,7 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
       queued: messageQueue.length > 0,
       queuePosition: messageQueue.length
     });
-    
+
     // Clean up file asynchronously (don't wait)
     if (uploadedFilePath) {
       fs.unlink(uploadedFilePath).catch(console.error);
@@ -1056,14 +1056,14 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
     }
     // Check if error is due to session being closed
     if (err.message && err.message.includes('Session closed')) {
-      return res.status(503).json({ 
-        ok: false, 
-        error: 'WhatsApp session is being reset. Please try again.' 
+      return res.status(503).json({
+        ok: false,
+        error: 'WhatsApp session is being reset. Please try again.'
       });
     }
     // Return actual error for debugging (WhatsApp errors like "Number not on WhatsApp" are user-actionable)
     const errorMessage = (err && err.message) ? String(err.message) : 'Failed to send message';
-    
+
     res.status(500).json({ ok: false, error: errorMessage });
   }
 });
@@ -1077,19 +1077,19 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
 app.post('/send-contact', handleFileUpload, async (req, res) => {
   // Handle multer errors gracefully
   if (req.fileValidationError) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: req.fileValidationError 
+    return res.status(400).json({
+      ok: false,
+      error: req.fileValidationError
     });
   }
   let uploadedFilePath = null;
-  
+
   try {
     // Quick validation checks first
     if (isClientDestroyed || isLoggingOut) {
-      return res.status(503).json({ 
-        ok: false, 
-        error: 'WhatsApp client is being reset. Please wait...' 
+      return res.status(503).json({
+        ok: false,
+        error: 'WhatsApp client is being reset. Please wait...'
       });
     }
 
@@ -1103,33 +1103,33 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
     const media = req.body.media ? String(req.body.media) : null;
     const mimetype = req.body.mimetype ? String(req.body.mimetype).trim() : null;
     const filename = req.body.filename ? String(req.body.filename).trim() : null;
-    
+
     // Validate contactId format
     if (!contactId) {
-      return res.status(400).json({ 
-        ok: false, 
-        error: 'contactId is required' 
+      return res.status(400).json({
+        ok: false,
+        error: 'contactId is required'
       });
     }
-    
+
     if (!validateContactId(contactId)) {
       // Log the actual value for debugging (only in development)
       if (process.env.NODE_ENV === 'development') {
         console.log('Invalid contactId received:', JSON.stringify(contactId));
       }
-      return res.status(400).json({ 
-        ok: false, 
-        error: `Invalid contactId format. Received: "${contactId.substring(0, 50)}". Expected format: number@c.us (e.g., 1234567890@c.us)` 
+      return res.status(400).json({
+        ok: false,
+        error: `Invalid contactId format. Received: "${contactId.substring(0, 50)}". Expected format: number@c.us (e.g., 1234567890@c.us)`
       });
     }
-    
+
     // Sanitize message
     message = sanitizeMessage(message);
 
     // Prepare message/media in parallel
     let messageToSend;
     let hasMedia = false;
-    
+
     if (req.file) {
       uploadedFilePath = req.file.path;
       messageToSend = MessageMedia.fromFilePath(uploadedFilePath);
@@ -1140,23 +1140,23 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
     } else if (media) {
       // Validate base64 media
       if (!validateBase64Media(media)) {
-        return res.status(400).json({ 
-          ok: false, 
-          error: 'Invalid base64 media format' 
+        return res.status(400).json({
+          ok: false,
+          error: 'Invalid base64 media format'
         });
       }
-      
+
       // Validate mimetype if provided
       if (mimetype && !ALLOWED_MIME_TYPES.includes(mimetype)) {
-        return res.status(400).json({ 
-          ok: false, 
-          error: `Invalid mimetype. Allowed types: ${ALLOWED_MIME_TYPES.join(', ')}` 
+        return res.status(400).json({
+          ok: false,
+          error: `Invalid mimetype. Allowed types: ${ALLOWED_MIME_TYPES.join(', ')}`
         });
       }
-      
+
       // Sanitize filename
       const safeFilename = filename ? sanitizeFilename(filename) : 'file';
-      
+
       messageToSend = new MessageMedia(mimetype || 'application/octet-stream', media, safeFilename);
       if (message) {
         messageToSend.caption = message;
@@ -1165,15 +1165,15 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
     } else if (message && message.trim()) {
       messageToSend = message;
     } else {
-      return res.status(400).json({ 
-        ok: false, 
-        error: 'Either message or file is required' 
+      return res.status(400).json({
+        ok: false,
+        error: 'Either message or file is required'
       });
     }
 
     // Queue message with anti-detection system
     let sentMessage, contactName = contactId;
-    
+
     try {
       await queueMessage(contactId, message, hasMedia, async () => {
         // Send message and get chat info in parallel
@@ -1181,24 +1181,24 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
           client.sendMessage(contactId, messageToSend, { sendSeen: false }),
           client.getChatById(contactId).catch(() => null)
         ]);
-        
+
         // Handle results
         if (sent.status === 'rejected') {
           throw sent.reason;
         }
-        
+
         sentMessage = sent.value;
-        contactName = (chat.status === 'fulfilled' && chat.value && !chat.value.isGroup) 
+        contactName = (chat.status === 'fulfilled' && chat.value && !chat.value.isGroup)
           ? (chat.value.name || contactId)
           : contactId;
       });
     } catch (queueError) {
       throw queueError;
     }
-    
+
     // Send response
-    res.json({ 
-      ok: true, 
+    res.json({
+      ok: true,
       id: sentMessage.id._serialized,
       timestamp: sentMessage.timestamp,
       contactName: contactName,
@@ -1206,7 +1206,7 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
       queued: messageQueue.length > 0,
       queuePosition: messageQueue.length
     });
-    
+
     // Clean up file asynchronously (don't wait)
     if (uploadedFilePath) {
       fs.unlink(uploadedFilePath).catch(console.error);
@@ -1219,14 +1219,14 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
     }
     // Check if error is due to session being closed
     if (err.message && err.message.includes('Session closed')) {
-      return res.status(503).json({ 
-        ok: false, 
-        error: 'WhatsApp session is being reset. Please try again.' 
+      return res.status(503).json({
+        ok: false,
+        error: 'WhatsApp session is being reset. Please try again.'
       });
     }
     // Return actual error (WhatsApp errors like "Number not on WhatsApp" are user-actionable)
     const errorMessage = (err && err.message) ? String(err.message) : 'Failed to send message';
-    
+
     res.status(500).json({ ok: false, error: errorMessage });
   }
 });
@@ -1239,16 +1239,16 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
 app.post('/api/reset-list', async (req, res) => {
   try {
     if (isClientDestroyed || isLoggingOut) {
-      return res.status(503).json({ 
-        ok: false, 
-        error: 'WhatsApp client is being reset. Please wait...' 
+      return res.status(503).json({
+        ok: false,
+        error: 'WhatsApp client is being reset. Please wait...'
       });
     }
 
     if (!client || !client.info) {
-      return res.status(503).json({ 
-        ok: false, 
-        error: 'WhatsApp client not ready yet' 
+      return res.status(503).json({
+        ok: false,
+        error: 'WhatsApp client not ready yet'
       });
     }
 
@@ -1257,31 +1257,31 @@ app.post('/api/reset-list', async (req, res) => {
     try {
       chats = await Promise.race([
         client.getChats(),
-        new Promise((_, reject) => 
+        new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Timeout getting chats')), 30000)
         )
       ]);
     } catch (chatError) {
       console.error('Error getting chats for reset:', chatError);
-      return res.status(500).json({ 
-        ok: false, 
-        error: 'Failed to refresh list. Please try again.' 
+      return res.status(500).json({
+        ok: false,
+        error: 'Failed to refresh list. Please try again.'
       });
     }
 
     // Validate and filter groups
     const groups = [];
     const contacts = [];
-    
+
     for (const chat of chats) {
       try {
         if (chat.isGroup) {
           const groupId = chat.id._serialized;
           if (groupId && groupId.endsWith('@g.us')) {
-            groups.push({ 
-              id: groupId, 
-              name: chat.name || 'Unnamed Group', 
-              participants: chat.participants?.length || null 
+            groups.push({
+              id: groupId,
+              name: chat.name || 'Unnamed Group',
+              participants: chat.participants?.length || null
             });
           }
         } else if (!chat.isMe) {
@@ -1301,9 +1301,9 @@ app.post('/api/reset-list', async (req, res) => {
       }
     }
 
-    res.json({ 
-      ok: true, 
-      groups, 
+    res.json({
+      ok: true,
+      groups,
       contacts,
       groupsCount: groups.length,
       contactsCount: contacts.length,
@@ -1311,12 +1311,12 @@ app.post('/api/reset-list', async (req, res) => {
     });
   } catch (err) {
     console.error('Error resetting list:', err);
-    const errorMessage = process.env.NODE_ENV === 'development' 
+    const errorMessage = process.env.NODE_ENV === 'development'
       ? err.message || 'Failed to reset list'
       : 'Failed to reset list';
-    
-    res.status(500).json({ 
-      ok: false, 
+
+    res.status(500).json({
+      ok: false,
       error: errorMessage
     });
   }
@@ -1404,10 +1404,10 @@ app.get('/api/qr-stream', (req, res) => {
 
   // Send initial state
   try {
-    res.write(`data: ${JSON.stringify({ 
-      qr: currentQRCode, 
+    res.write(`data: ${JSON.stringify({
+      qr: currentQRCode,
       hasQR: !!currentQRCode,
-      connected: !!client.info 
+      connected: !!client.info
     })}\n\n`);
   } catch (err) {
     console.error('Error sending initial SSE data:', err);
@@ -1446,20 +1446,20 @@ app.get('/api/qr-stream', (req, res) => {
 app.post('/api/logout', async (req, res) => {
   // Ensure we always return JSON
   res.setHeader('Content-Type', 'application/json');
-  
+
   try {
     // Prevent concurrent logout operations
     if (isLoggingOut) {
-      return res.json({ 
-        ok: false, 
-        error: 'Logout already in progress. Please wait...' 
+      return res.json({
+        ok: false,
+        error: 'Logout already in progress. Please wait...'
       });
     }
 
     if (!client || !client.info) {
-      return res.json({ 
-        ok: false, 
-        error: 'No active session to logout' 
+      return res.json({
+        ok: false,
+        error: 'No active session to logout'
       });
     }
 
@@ -1468,11 +1468,11 @@ app.post('/api/logout', async (req, res) => {
     isClientDestroyed = true;
 
     console.log('Logging out WhatsApp client...');
-    
+
     // Send response immediately to prevent timeout
-    res.json({ 
-      ok: true, 
-      message: 'Logging out... Please wait for new QR code.' 
+    res.json({
+      ok: true,
+      message: 'Logging out... Please wait for new QR code.'
     });
 
     // Perform logout asynchronously
@@ -1530,12 +1530,12 @@ app.post('/api/logout', async (req, res) => {
         console.error('Error during async logout:', err);
         isLoggingOut = false;
         isClientDestroyed = false;
-        notifyQRListeners({ 
-          qr: null, 
-          hasQR: false, 
-          connected: false, 
+        notifyQRListeners({
+          qr: null,
+          hasQR: false,
+          connected: false,
           loggedOut: true,
-          error: 'Logout completed with warnings' 
+          error: 'Logout completed with warnings'
         });
       }
     })();
@@ -1544,9 +1544,9 @@ app.post('/api/logout', async (req, res) => {
     console.error('Error during logout:', err);
     isLoggingOut = false;
     isClientDestroyed = false;
-    res.status(500).json({ 
-      ok: false, 
-      error: err.message || 'Failed to logout' 
+    res.status(500).json({
+      ok: false,
+      error: err.message || 'Failed to logout'
     });
   }
 });
@@ -1586,19 +1586,19 @@ app.use((req, res, next) => {
 // Global error handler (catch-all for unhandled errors)
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
-  
+
   // Don't send error response if headers already sent
   if (res.headersSent) {
     return next(err);
   }
-  
+
   // Security: Don't expose error details in production
-  const errorMessage = process.env.NODE_ENV === 'development' 
+  const errorMessage = process.env.NODE_ENV === 'development'
     ? err.message || 'Internal server error'
     : 'Internal server error';
-  
-  res.status(err.status || 500).json({ 
-    ok: false, 
+
+  res.status(err.status || 500).json({
+    ok: false,
     error: errorMessage,
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
   });
@@ -1617,26 +1617,26 @@ let server;
 
 function gracefulShutdown(signal) {
   console.log(`\n${signal} received. Starting graceful shutdown...`);
-  
+
   // Stop accepting new connections
   if (server) {
     server.close(() => {
       console.log('HTTP server closed.');
-      
+
       // Cleanup WhatsApp client
       if (client && client.info) {
         console.log('Cleaning up WhatsApp client...');
         client.destroy().catch(console.error);
       }
-      
+
       // Cleanup message history to prevent memory leaks
       messageHistory.length = 0;
       messageQueue.length = 0;
-      
+
       console.log('Graceful shutdown complete.');
       process.exit(0);
     });
-    
+
     // Force close after 10 seconds
     setTimeout(() => {
       console.error('Forced shutdown after timeout');
