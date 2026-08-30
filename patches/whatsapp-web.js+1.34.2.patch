@@ -25,23 +25,50 @@ index fd4e16a..7398529 100644
              try {
                  await window.Store.GroupUtils.setGroupDescription(chatWid, description, newId, descId);
 diff --git a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
-index 54f9caf..02109df 100644
+index 54f9caf..9bb56bb 100644
 --- a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
 +++ b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
-@@ -590,7 +590,11 @@ exports.LoadUtils = () => {
+@@ -565,14 +565,16 @@ exports.LoadUtils = () => {
+ 
+     window.WWebJS.getChats = async () => {
+         const chats = window.Store.Chat.getModelsArray();
+-        const chatPromises = chats.map(chat => window.WWebJS.getChatModel(chat));
+-        return await Promise.all(chatPromises);
++        const chatPromises = chats.map(chat => window.WWebJS.getChatModel(chat).catch(() => null));
++        const res = await Promise.all(chatPromises);
++        return res.filter(Boolean);
+     };
+ 
+     window.WWebJS.getChannels = async () => {
+         const channels = window.Store.NewsletterCollection.getModelsArray();
+-        const channelPromises = channels?.map((channel) => window.WWebJS.getChatModel(channel, { isChannel: true }));
+-        return await Promise.all(channelPromises);
++        const channelPromises = channels?.map((channel) => window.WWebJS.getChatModel(channel, { isChannel: true }).catch(() => null));
++        const res = await Promise.all(channelPromises);
++        return res.filter(Boolean);
+     };
+ 
+     window.WWebJS.getChatModel = async (chat, { isChannel = false } = {}) => {
+@@ -590,27 +592,40 @@ exports.LoadUtils = () => {
          if (chat.groupMetadata) {
              model.isGroup = true;
              const chatWid = window.Store.WidFactory.createWid(chat.id._serialized);
 -            await window.Store.GroupMetadata.update(chatWid);
+-            chat.groupMetadata.participants._models
+-                .filter(x => x.id?._serialized?.endsWith('@lid'))
+-                .forEach(x => x.contact?.phoneNumber && (x.id = x.contact.phoneNumber));
 +            try {
 +                if (window.Store.GroupMetadata && typeof window.Store.GroupMetadata.update === 'function') {
 +                    await window.Store.GroupMetadata.update(chatWid);
 +                }
 +            } catch (_) {}
-             chat.groupMetadata.participants._models
-                 .filter(x => x.id?._serialized?.endsWith('@lid'))
-                 .forEach(x => x.contact?.phoneNumber && (x.id = x.contact.phoneNumber));
-@@ -599,7 +603,11 @@ exports.LoadUtils = () => {
++            try {
++                chat.groupMetadata.participants._models
++                    .filter(x => x.id?._serialized?.endsWith('@lid'))
++                    .forEach(x => x.contact?.phoneNumber && (x.id = x.contact.phoneNumber));
++            } catch (_) {}
+             model.groupMetadata = chat.groupMetadata.serialize();
+             model.isReadOnly = chat.groupMetadata.announce;
          }
  
          if (chat.newsletterMetadata) {
@@ -54,3 +81,23 @@ index 54f9caf..02109df 100644
              model.channelMetadata = chat.newsletterMetadata.serialize();
              model.channelMetadata.createdAtTs = chat.newsletterMetadata.creationTime;
          }
+ 
+         model.lastMessage = null;
+-        if (model.msgs && model.msgs.length) {
+-            const lastMessage = chat.lastReceivedKey
+-                ? window.Store.Msg.get(chat.lastReceivedKey._serialized) || (await window.Store.Msg.getMessagesById([chat.lastReceivedKey._serialized]))?.messages?.[0]
+-                : null;
+-            lastMessage && (model.lastMessage = window.WWebJS.getMessageModel(lastMessage));
+-        }
++        try {
++            if (model.msgs && model.msgs.length) {
++                const lastMessageKey = chat.lastReceivedKey?._serialized || chat.lastReceivedKey;
++                const lastMessage = lastMessageKey
++                    ? window.Store.Msg.get(lastMessageKey) || (await window.Store.Msg.getMessagesById([lastMessageKey]))?.messages?.[0]
++                    : null;
++                lastMessage && (model.lastMessage = window.WWebJS.getMessageModel(lastMessage));
++            }
++        } catch (_) {}
+ 
+         delete model.msgs;
+         delete model.msgUnsyncedButtonReplyMsgs;
