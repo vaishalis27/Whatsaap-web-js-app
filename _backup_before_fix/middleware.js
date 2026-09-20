@@ -8,7 +8,7 @@
  */
 const DASHBOARD_PATHS = [
   '/status',
-  '/api/health', '/api/qr', '/api/qr-image', '/api/qr-stream', '/api/force-qr', '/api/logout', '/api/reset-list',
+  '/api/health', '/api/qr', '/api/qr-image', '/api/qr-stream', '/api/force-qr', '/api/logout',
   '/list-groups', '/list-contacts'
 ];
 

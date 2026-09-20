@@ -11,36 +11,8 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const compression = require('compression');
 const cors = require('cors');
-const {
-  ALLOWED_MIME_TYPES,
-  sanitizeFilename,
-  sanitizeMessage,
-  normalizeGroupId,
-  normalizeContactId,
-  parseBase64Media,
-  createRequestTimeout,
-  isValidApiKey,
-  parseTrustProxy,
-  clearAuthSession: clearAuthSessionFolder,
-  sweepOldFiles
-} = require('./lib/helpers');
 
 const app = express();
-
-// Behind a reverse proxy (nginx/Hostinger) every client would otherwise share the proxy's IP,
-// which breaks per-IP rate limiting. Default: trust 1 hop in production, none otherwise
-// (trusting X-Forwarded-For without a proxy lets clients spoof their IP). Override with TRUST_PROXY.
-app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY, process.env.NODE_ENV === 'production' ? 1 : false));
-
-// Request timeout must be registered BEFORE the routes (Express runs middleware in order, so a
-// timeout registered after the routes never runs). The SSE stream is exempt (long-lived) and the
-// send endpoints get a longer window because they can legitimately wait in the anti-detection queue.
-app.use(createRequestTimeout({
-  ms: parseInt(process.env.REQUEST_TIMEOUT_MS) || 60000,
-  longMs: parseInt(process.env.SEND_REQUEST_TIMEOUT_MS) || 5 * 60 * 1000,
-  longPaths: ['/send-group', '/send-contact'],
-  skipPaths: ['/api/qr-stream']
-}));
 
 // Security: Helmet.js for security headers
 app.use(helmet({
@@ -73,26 +45,14 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-// Compression for better performance.
-// Never compress the SSE stream: gzip buffers small writes, so clients that send Accept-Encoding: gzip
-// (all browsers) would not receive QR/status events until the buffer fills.
-app.use(compression({
-  filter: (req, res) => {
-    const contentType = String(res.getHeader('Content-Type') || '');
-    if (contentType.includes('text/event-stream')) return false;
-    return compression.filter(req, res);
-  }
-}));
+// Compression for better performance
+app.use(compression());
 
 // Request size limits (prevent DoS)
 app.use(express.json({ limit: '10mb' })); // Limit JSON payloads
 app.use(express.urlencoded({ extended: true, limit: '10mb' })); // Limit form data
 
 // Rate limiting to prevent abuse
-// Trusted server-to-server callers (bulk/cron notifications) present a valid X-API-Key and are exempt:
-// pacing is enforced by the anti-detection queue instead, so limiting them only causes HTTP 429s.
-const hasValidApiKey = (req) => isValidApiKey(req.headers['x-api-key'], process.env.API_KEY);
-
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // Limit each IP to 100 requests per windowMs
@@ -100,7 +60,6 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
-    if (hasValidApiKey(req)) return true;
     // Don't count QR/connection endpoints (qr-image auto-refreshes every 3s)
     const pathname = (req.originalUrl || req.url || '').split('?')[0];
     return pathname === '/api/qr' || pathname === '/api/qr-image' || pathname === '/api/qr-stream' ||
@@ -115,7 +74,6 @@ const sendMessageLimiter = rateLimit({
   message: { ok: false, error: 'Too many messages sent. Please wait a moment to avoid detection.' },
   standardHeaders: true,
   legacyHeaders: false,
-  skip: hasValidApiKey,
 });
 
 app.use('/api/', limiter); // Apply to all API routes
@@ -128,6 +86,32 @@ app.use('/send-contact', sendMessageLimiter);
 const uploadDir = path.join(__dirname, 'uploads');
 // Ensure uploads directory exists
 fs.mkdir(uploadDir, { recursive: true }).catch(console.error);
+
+// Allowed file types (security: restrict file types)
+const ALLOWED_MIME_TYPES = [
+  'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+  'application/pdf',
+  'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .doc, .docx
+  'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xls, .xlsx
+  'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .ppt, .pptx
+  'text/plain',
+  'video/mp4', 'video/quicktime', 'video/x-msvideo', // .mp4, .mov, .avi
+  'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg'
+];
+
+// Sanitize filename to prevent path traversal attacks
+function sanitizeFilename(filename) {
+  // Remove path traversal attempts
+  let sanitized = filename.replace(/\.\./g, '').replace(/[\/\\]/g, '_');
+  // Remove any non-alphanumeric characters except dots, hyphens, underscores
+  sanitized = sanitized.replace(/[^a-zA-Z0-9._-]/g, '_');
+  // Limit length
+  if (sanitized.length > 255) {
+    const ext = path.extname(sanitized);
+    sanitized = sanitized.substring(0, 255 - ext.length) + ext;
+  }
+  return sanitized;
+}
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -196,28 +180,9 @@ const handleFileUpload = (req, res, next) => {
         error: 'File upload error'
       });
     }
-    // The upload is read into memory (MessageMedia.fromFilePath) as soon as the handler starts, so the
-    // file on disk is disposable once the response is done. 'close' fires on every exit path
-    // (success, validation error, thrown error, dropped connection), so nothing is orphaned in uploads/.
-    if (req.file && req.file.path) {
-      const uploadedPath = req.file.path;
-      res.once('close', () => {
-        fs.unlink(uploadedPath).catch((e) => {
-          if (e.code !== 'ENOENT') console.error('Failed to delete upload:', e.message);
-        });
-      });
-    }
     next();
   });
 };
-
-// Sweep orphaned uploads (e.g. left by a crash) at startup and hourly
-const UPLOAD_MAX_AGE_MS = 60 * 60 * 1000;
-const sweepUploads = () => sweepOldFiles(uploadDir, UPLOAD_MAX_AGE_MS)
-  .then(n => { if (n) console.log(`Removed ${n} orphaned upload(s)`); })
-  .catch(() => { });
-sweepUploads();
-setInterval(sweepUploads, 60 * 60 * 1000).unref();
 
 // Store current QR code data
 let currentQRCode = null;
@@ -335,24 +300,6 @@ function detectSuspiciousPattern(recipientId, message) {
   return false;
 }
 
-// Is the WhatsApp client connected and usable right now?
-function isClientReady() {
-  return !!(client && client.info && !isClientDestroyed && !isLoggingOut);
-}
-
-// When the session drops (reconnect, QR re-link) queued messages should wait for it to come back
-// instead of all failing at once. Resolves true when ready, false if it did not recover in time.
-const QUEUE_READY_TIMEOUT_MS = parseInt(process.env.QUEUE_READY_TIMEOUT_MS) || 45000;
-async function waitForClientReady(timeoutMs = QUEUE_READY_TIMEOUT_MS) {
-  const deadline = Date.now() + timeoutMs;
-  while (!isClientReady()) {
-    // A logout in progress will not recover on its own; fail fast
-    if (isLoggingOut || Date.now() >= deadline) return false;
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  }
-  return true;
-}
-
 // Process message queue
 async function processMessageQueue() {
   if (isProcessingQueue || messageQueue.length === 0) {
@@ -361,75 +308,59 @@ async function processMessageQueue() {
 
   isProcessingQueue = true;
 
-  try {
-    while (messageQueue.length > 0) {
-      const queueItem = messageQueue[0];
+  while (messageQueue.length > 0) {
+    const queueItem = messageQueue[0];
 
-      // Check if we need to wait
-      const waitTime = shouldWait();
-      if (waitTime > 0) {
-        console.log(`⏳ Anti-detection: Waiting ${Math.round(waitTime / 1000)}s before sending next message...`);
-        await new Promise(resolve => setTimeout(resolve, waitTime));
+    // Check if we need to wait
+    const waitTime = shouldWait();
+    if (waitTime > 0) {
+      console.log(`⏳ Anti-detection: Waiting ${Math.round(waitTime / 1000)}s before sending next message...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+
+    // Check for suspicious patterns
+    if (detectSuspiciousPattern(queueItem.recipientId, queueItem.message || '')) {
+      console.warn('⚠️  Suspicious pattern detected! Adding extra delay...');
+      await new Promise(resolve => setTimeout(resolve, ANTI_DETECTION_CONFIG.cooldownPeriod));
+    }
+
+    // Remove from queue
+    messageQueue.shift();
+
+    // Execute the send function
+    try {
+      const delay = getHumanDelay(queueItem.hasMedia);
+      if (delay > 0 && lastMessageTime > 0) {
+        // Only add delay if we've sent a message before
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
 
-      // Check for suspicious patterns
-      if (detectSuspiciousPattern(queueItem.recipientId, queueItem.message || '')) {
-        console.warn('⚠️  Suspicious pattern detected! Adding extra delay...');
-        await new Promise(resolve => setTimeout(resolve, ANTI_DETECTION_CONFIG.cooldownPeriod));
+      await queueItem.sendFunction();
+
+      // Update tracking
+      lastMessageTime = Date.now();
+      messageCountInWindow++;
+      addToHistory(queueItem.recipientId, queueItem.message || '', queueItem.hasMedia);
+
+      // Resolve the promise
+      if (queueItem.resolve) {
+        queueItem.resolve();
       }
 
-      // If the session dropped while queued, give it a chance to reconnect before failing this message
-      if (!isClientReady()) {
-        console.log('⏳ Queue: WhatsApp client not ready, waiting for reconnect...');
-        const recovered = await waitForClientReady();
-        if (!recovered) {
-          messageQueue.shift();
-          const notReady = new Error('WhatsApp client not ready (session did not reconnect in time)');
-          notReady.code = 'CLIENT_NOT_READY';
-          if (queueItem.reject) queueItem.reject(notReady);
-          continue;
-        }
-      }
+      // Reset message count after cooldown period
+      setTimeout(() => {
+        messageCountInWindow = Math.max(0, messageCountInWindow - 1);
+      }, ANTI_DETECTION_CONFIG.cooldownPeriod);
 
-      // Remove from queue
-      messageQueue.shift();
-
-      // Execute the send function
-      try {
-        const delay = getHumanDelay(queueItem.hasMedia);
-        if (delay > 0 && lastMessageTime > 0) {
-          // Only add delay if we've sent a message before
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-
-        await queueItem.sendFunction();
-
-        // Update tracking
-        lastMessageTime = Date.now();
-        messageCountInWindow++;
-        addToHistory(queueItem.recipientId, queueItem.message || '', queueItem.hasMedia);
-
-        // Resolve the promise
-        if (queueItem.resolve) {
-          queueItem.resolve();
-        }
-
-        // Reset message count after cooldown period
-        setTimeout(() => {
-          messageCountInWindow = Math.max(0, messageCountInWindow - 1);
-        }, ANTI_DETECTION_CONFIG.cooldownPeriod).unref();
-
-      } catch (error) {
-        console.error('Error processing queued message:', error);
-        if (queueItem.reject) {
-          queueItem.reject(error);
-        }
+    } catch (error) {
+      console.error('Error processing queued message:', error);
+      if (queueItem.reject) {
+        queueItem.reject(error);
       }
     }
-  } finally {
-    // Never leave the queue stuck in "processing" if something unexpected throws
-    isProcessingQueue = false;
   }
+
+  isProcessingQueue = false;
 }
 
 // Queue a message for sending (with anti-detection)
@@ -449,6 +380,38 @@ function queueMessage(recipientId, message, hasMedia, sendFunction) {
   });
 }
 
+// Input validation helpers
+function validateGroupId(groupId) {
+  if (!groupId || typeof groupId !== 'string') return false;
+  const trimmed = groupId.trim();
+  // WhatsApp group ID format: must end with @g.us
+  // More flexible validation - accepts any format ending with @g.us
+  // WhatsApp library will handle actual format validation
+  return trimmed.endsWith('@g.us') && trimmed.length > 6 && !trimmed.includes(' ');
+}
+
+function validateContactId(contactId) {
+  if (!contactId || typeof contactId !== 'string') return false;
+  const trimmed = contactId.trim();
+  // WhatsApp contact ID format: must end with @c.us
+  // More flexible validation - accepts any format ending with @c.us
+  // WhatsApp library will handle actual format validation
+  return trimmed.endsWith('@c.us') && trimmed.length > 6 && !trimmed.includes(' ');
+}
+
+function sanitizeMessage(message) {
+  if (!message || typeof message !== 'string') return '';
+  // Trim and limit length (WhatsApp has a 4096 character limit)
+  return message.trim().substring(0, 4096);
+}
+
+function validateBase64Media(media) {
+  if (!media || typeof media !== 'string') return false;
+  // Basic base64 validation
+  const base64Regex = /^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,([A-Za-z0-9+/=]+)$/;
+  return base64Regex.test(media) || /^[A-Za-z0-9+/=]+$/.test(media);
+}
+
 // Serve static files (dashboard) with caching
 app.use(express.static('public', {
   maxAge: '1d', // Cache static files for 1 day
@@ -461,9 +424,8 @@ const { apiKeyAuth } = require('./middleware');
 app.use(apiKeyAuth);
 
 // Client configuration
-const AUTH_CLIENT_ID = 'my-instance'; // LocalAuth stores this client in .wwebjs_auth/session-<AUTH_CLIENT_ID>
 const clientConfig = {
-  authStrategy: new LocalAuth({ clientId: AUTH_CLIENT_ID }),
+  authStrategy: new LocalAuth({ clientId: "my-instance" }),
   // Use 'local' cache - 'none' can fetch versions WhatsApp rejects for linking
   webVersionCache: { type: 'local' },
   // Modern Chrome user agent (helps avoid "could not link device" in some cases)
@@ -487,12 +449,8 @@ let client = new Client(clientConfig);
 
 // Setup client event handlers
 function setupClientEvents() {
-  // Events from a client that has since been replaced/destroyed must not touch the current state
-  const self = client;
-  const isStale = () => self !== client;
   client.on('authenticated', () => { });
   client.on('qr', async (qr) => {
-    if (isStale()) return;
     console.log('--- Scan this QR with your WhatsApp phone ---');
     console.log('Web view: http://localhost:' + (process.env.PORT || 4000) + '/api/qr-image');
     qrcode.generate(qr, { small: true });
@@ -516,7 +474,6 @@ function setupClientEvents() {
   });
 
   client.on('ready', () => {
-    if (isStale()) return;
     console.log('WhatsApp client ready.');
     // Clear QR code when connected
     currentQRCode = null;
@@ -527,31 +484,21 @@ function setupClientEvents() {
   });
 
   client.on('auth_failure', msg => {
-    if (isStale()) return;
     console.error('Auth failure:', msg);
     notifyQRListeners({ qr: null, hasQR: false, connected: false, authFailure: true });
   });
 
   client.on('disconnected', (reason) => {
-    if (isStale()) return;
     console.log('Client disconnected:', reason);
     currentQRCode = null;
     // Reset flags if disconnected (not during logout)
     if (!isLoggingOut) {
       isClientDestroyed = false;
     }
-    // LOGGED_OUT means the user unlinked this device from their phone. Reconnecting cannot work
-    // (the session is revoked) and would just loop, so report it and wait for a manual re-link
-    // (POST /api/force-qr or the dashboard's "New QR" button).
-    if (reason === 'LOGGED_OUT') {
-      console.log('Device was logged out from the phone. Not reconnecting automatically; scan a new QR to re-link.');
-      notifyQRListeners({ qr: null, hasQR: false, connected: false, loggedOut: true });
-      return;
-    }
     notifyQRListeners({ qr: null, hasQR: false, connected: false });
 
     // Auto-reconnect if session was closed unexpectedly (not during logout)
-    if (!isLoggingOut && (reason === 'NAVIGATION' || reason === 'CONFLICT')) {
+    if (!isLoggingOut && (reason === 'NAVIGATION' || reason === 'CONFLICT' || reason === 'LOGGED_OUT')) {
       console.log('Session closed unexpectedly. Attempting to reinitialize...');
       setTimeout(() => {
         if (!isLoggingOut && !isClientDestroyed) {
@@ -588,65 +535,46 @@ function notifyQRListeners(data) {
   deadListeners.forEach(listener => qrCodeListeners.delete(listener));
 }
 
-// Helper function to clear THIS instance's auth session only (never other sessions in .wwebjs_auth)
+// Helper function to clear auth session
 async function clearAuthSession() {
-  const cleared = await clearAuthSessionFolder(AUTH_CLIENT_ID);
-  if (cleared) console.log('Auth session cleared');
-  return cleared;
-}
-
-// Destroy a client and WAIT for Chrome to exit; otherwise it keeps file locks on the session folder
-// (EBUSY/EPERM on Windows when the folder is deleted right after).
-async function destroyClientSafely(target, label) {
-  if (!target) return;
+  const authPath = path.join(process.cwd(), '.wwebjs_auth');
   try {
-    await Promise.race([
-      target.destroy(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('destroy timeout')), 15000).unref())
-    ]);
+    await fs.rm(authPath, { recursive: true, force: true });
+    console.log('Auth session cleared');
+    return true;
   } catch (err) {
-    console.warn(`Error destroying client (${label}):`, err.message);
+    console.error('Error clearing auth session:', err);
+    return false;
   }
 }
 
-// Start a client without letting an initialization failure become an unhandled rejection
-function initializeClient(target) {
-  Promise.resolve(target.initialize()).catch(err => {
-    console.error('Client initialization failed:', err && err.message ? err.message : err);
-  });
-}
-
-let isReinitializing = false; // Guards against concurrent reinit (watchdog + request errors + disconnect handler)
-
 // Helper function to reinitialize client when session is closed
-async function reinitializeClient() {
-  if (isLoggingOut || isClientDestroyed || isReinitializing) {
-    console.log('Skipping reinitialize - logout in progress, client destroyed, or reinit already running');
+function reinitializeClient() {
+  if (isLoggingOut || isClientDestroyed) {
+    console.log('Skipping reinitialize - logout in progress or client destroyed');
     return;
   }
 
-  isReinitializing = true;
   try {
     console.log('Reinitializing WhatsApp client...');
     isClientDestroyed = true; // Prevent new requests during reinit
 
-    // Destroy existing client (and wait for the browser to exit) before creating a new one
-    const oldClient = client;
-    await destroyClientSafely(oldClient, 'reinit');
+    // Destroy existing client if it exists
+    if (client) {
+      client.destroy().catch(err => {
+        console.warn('Error destroying old client during reinit:', err.message);
+      });
+    }
 
     // Create new client instance
     client = new Client(clientConfig);
     setupClientEvents();
-    initializeClient(client);
+    client.initialize();
 
     console.log('Client reinitialization started. Waiting for QR code or connection...');
   } catch (err) {
     console.error('Error reinitializing client:', err);
-  } finally {
-    // A fresh client without a session is not "destroyed": /api/force-qr must stay usable while a QR is pending.
-    // Requests are still rejected by the client.info check until it is ready.
     isClientDestroyed = false;
-    isReinitializing = false;
   }
 }
 
@@ -669,52 +597,42 @@ function isSessionBrokenError(err) {
  * Force a fresh QR by clearing saved session and reinitializing (use when stuck "restoring" or QR never appears)
  */
 async function forceNewQR() {
-  if (isLoggingOut || isClientDestroyed || isReinitializing) {
+  if (isLoggingOut || isClientDestroyed) {
     console.log('Skipping forceNewQR - logout in progress or client destroyed');
     return { ok: false, error: 'Please wait, operation in progress.' };
   }
-  isReinitializing = true;
   try {
     console.log('Force new QR: clearing session and reinitializing...');
     isClientDestroyed = true;
     currentQRCode = null;
     notifyQRListeners({ qr: null, hasQR: false, connected: false });
 
-    // Wait for Chrome to exit BEFORE deleting its profile folder (file locks -> EBUSY/EPERM on Windows)
-    const oldClient = client;
-    client = null;
-    await destroyClientSafely(oldClient, 'force-qr');
+    if (client) {
+      client.destroy().catch(() => { });
+      client = null;
+    }
 
     const cleared = await clearAuthSession();
     if (!cleared) {
-      // Do not leave the service without a client: bring the previous session back
-      client = new Client(clientConfig);
-      setupClientEvents();
-      initializeClient(client);
+      isClientDestroyed = false;
       return { ok: false, error: 'Failed to clear session folder.' };
     }
 
     // New client with fresh auth (no saved session = will emit QR)
     client = new Client(clientConfig);
     setupClientEvents();
-    initializeClient(client);
+    client.initialize();
+    isClientDestroyed = false;
     console.log('Client reinitialized. QR code should appear shortly.');
     return { ok: true, message: 'Session cleared. QR code will appear in 15–60 seconds.' };
   } catch (err) {
     console.error('Error in forceNewQR:', err);
-    if (!client) {
-      client = new Client(clientConfig);
-      setupClientEvents();
-      initializeClient(client);
-    }
-    return { ok: false, error: err.message || 'Failed to force new QR.' };
-  } finally {
     isClientDestroyed = false;
-    isReinitializing = false;
+    return { ok: false, error: err.message || 'Failed to force new QR.' };
   }
 }
 
-initializeClient(client);
+client.initialize();
 
 // Watchdog: periodically verify the page's injected WWebJS/Store scripts are still
 // present. WA Web can silently reload its page (version bump, long idle, etc.)
@@ -748,7 +666,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
     message: 'WhatsApp API is running',
-    status: (client && client.info) ? 'connected' : 'connecting'
+    status: client.info ? 'connected' : 'connecting'
   });
 });
 
@@ -1041,6 +959,7 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
       error: req.fileValidationError
     });
   }
+  let uploadedFilePath = null;
 
   try {
     // Quick validation checks first
@@ -1056,29 +975,28 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
     }
 
     // Get and validate form data
-    const rawGroupId = req.body.groupId ? String(req.body.groupId).trim() : '';
+    const groupId = req.body.groupId ? String(req.body.groupId).trim() : '';
     let message = req.body.message ? String(req.body.message) : '';
     const media = req.body.media ? String(req.body.media) : null;
     const mimetype = req.body.mimetype ? String(req.body.mimetype).trim() : null;
     const filename = req.body.filename ? String(req.body.filename).trim() : null;
 
-    // Validate groupId format (a bare "123-456" is accepted and normalized to "123-456@g.us")
-    if (!rawGroupId) {
+    // Validate groupId format
+    if (!groupId) {
       return res.status(400).json({
         ok: false,
         error: 'groupId is required'
       });
     }
 
-    const groupId = normalizeGroupId(rawGroupId);
-    if (!groupId) {
+    if (!validateGroupId(groupId)) {
       // Log the actual value for debugging (only in development)
       if (process.env.NODE_ENV === 'development') {
-        console.log('Invalid groupId received:', JSON.stringify(rawGroupId));
+        console.log('Invalid groupId received:', JSON.stringify(groupId));
       }
       return res.status(400).json({
         ok: false,
-        error: `Invalid groupId format. Received: "${rawGroupId.substring(0, 50)}". Expected format: numbers-numbers@g.us (e.g., 123456789-123456789@g.us)`
+        error: `Invalid groupId format. Received: "${groupId.substring(0, 50)}". Expected format: numbers-numbers@g.us (e.g., 123456789-123456789@g.us)`
       });
     }
 
@@ -1090,27 +1008,23 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
     let hasMedia = false;
 
     if (req.file) {
-      messageToSend = MessageMedia.fromFilePath(req.file.path);
+      uploadedFilePath = req.file.path;
+      messageToSend = MessageMedia.fromFilePath(uploadedFilePath);
       if (message) {
         messageToSend.caption = message;
       }
       hasMedia = true;
     } else if (media) {
-      // Validate base64 media and strip any "data:<mime>;base64," prefix (MessageMedia needs raw base64;
-      // leaving the prefix in corrupts images/PDFs)
-      const parsedMedia = parseBase64Media(media);
-      if (!parsedMedia) {
+      // Validate base64 media
+      if (!validateBase64Media(media)) {
         return res.status(400).json({
           ok: false,
           error: 'Invalid base64 media format'
         });
       }
 
-      // An explicit mimetype wins; otherwise use the one from the data URL
-      const effectiveMimetype = mimetype || parsedMedia.mimetype;
-
-      // Validate mimetype
-      if (effectiveMimetype && !ALLOWED_MIME_TYPES.includes(effectiveMimetype)) {
+      // Validate mimetype if provided
+      if (mimetype && !ALLOWED_MIME_TYPES.includes(mimetype)) {
         return res.status(400).json({
           ok: false,
           error: `Invalid mimetype. Allowed types: ${ALLOWED_MIME_TYPES.join(', ')}`
@@ -1120,7 +1034,7 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
       // Sanitize filename
       const safeFilename = filename ? sanitizeFilename(filename) : 'file';
 
-      messageToSend = new MessageMedia(effectiveMimetype || 'application/octet-stream', parsedMedia.data, safeFilename);
+      messageToSend = new MessageMedia(mimetype || 'application/octet-stream', media, safeFilename);
       if (message) {
         messageToSend.caption = message;
       }
@@ -1163,15 +1077,23 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
     res.json({
       ok: true,
       id: sentMessage.id._serialized,
-      messageId: sentMessage.id._serialized,
       timestamp: sentMessage.timestamp,
       groupName: groupName,
       hasMedia: hasMedia,
       queued: messageQueue.length > 0,
       queuePosition: messageQueue.length
     });
+
+    // Clean up file asynchronously (don't wait)
+    if (uploadedFilePath) {
+      fs.unlink(uploadedFilePath).catch(console.error);
+    }
   } catch (err) {
     console.error('Error sending message:', err);
+    // Clean up file on error
+    if (uploadedFilePath) {
+      fs.unlink(uploadedFilePath).catch(console.error);
+    }
     // Check if error is due to session being closed or the page's script context being broken
     if (isSessionBrokenError(err)) {
       if (!isLoggingOut && !isClientDestroyed) {
@@ -1205,6 +1127,7 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
       error: req.fileValidationError
     });
   }
+  let uploadedFilePath = null;
 
   try {
     // Quick validation checks first
@@ -1220,29 +1143,28 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
     }
 
     // Get and validate form data
-    const rawContactId = req.body.contactId ? String(req.body.contactId).trim() : '';
+    const contactId = req.body.contactId ? String(req.body.contactId).trim() : '';
     let message = req.body.message ? String(req.body.message) : '';
     const media = req.body.media ? String(req.body.media) : null;
     const mimetype = req.body.mimetype ? String(req.body.mimetype).trim() : null;
     const filename = req.body.filename ? String(req.body.filename).trim() : null;
 
-    // Validate contactId format (raw phone numbers are normalized to "<digits>@c.us"; "@lid" ids are accepted)
-    if (!rawContactId) {
+    // Validate contactId format
+    if (!contactId) {
       return res.status(400).json({
         ok: false,
         error: 'contactId is required'
       });
     }
 
-    const contactId = normalizeContactId(rawContactId);
-    if (!contactId) {
+    if (!validateContactId(contactId)) {
       // Log the actual value for debugging (only in development)
       if (process.env.NODE_ENV === 'development') {
-        console.log('Invalid contactId received:', JSON.stringify(rawContactId));
+        console.log('Invalid contactId received:', JSON.stringify(contactId));
       }
       return res.status(400).json({
         ok: false,
-        error: `Invalid contactId format. Received: "${rawContactId.substring(0, 50)}". Expected format: number@c.us, id@lid, or a plain phone number (e.g., 1234567890@c.us)`
+        error: `Invalid contactId format. Received: "${contactId.substring(0, 50)}". Expected format: number@c.us (e.g., 1234567890@c.us)`
       });
     }
 
@@ -1254,27 +1176,23 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
     let hasMedia = false;
 
     if (req.file) {
-      messageToSend = MessageMedia.fromFilePath(req.file.path);
+      uploadedFilePath = req.file.path;
+      messageToSend = MessageMedia.fromFilePath(uploadedFilePath);
       if (message) {
         messageToSend.caption = message;
       }
       hasMedia = true;
     } else if (media) {
-      // Validate base64 media and strip any "data:<mime>;base64," prefix (MessageMedia needs raw base64;
-      // leaving the prefix in corrupts images/PDFs)
-      const parsedMedia = parseBase64Media(media);
-      if (!parsedMedia) {
+      // Validate base64 media
+      if (!validateBase64Media(media)) {
         return res.status(400).json({
           ok: false,
           error: 'Invalid base64 media format'
         });
       }
 
-      // An explicit mimetype wins; otherwise use the one from the data URL
-      const effectiveMimetype = mimetype || parsedMedia.mimetype;
-
-      // Validate mimetype
-      if (effectiveMimetype && !ALLOWED_MIME_TYPES.includes(effectiveMimetype)) {
+      // Validate mimetype if provided
+      if (mimetype && !ALLOWED_MIME_TYPES.includes(mimetype)) {
         return res.status(400).json({
           ok: false,
           error: `Invalid mimetype. Allowed types: ${ALLOWED_MIME_TYPES.join(', ')}`
@@ -1284,7 +1202,7 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
       // Sanitize filename
       const safeFilename = filename ? sanitizeFilename(filename) : 'file';
 
-      messageToSend = new MessageMedia(effectiveMimetype || 'application/octet-stream', parsedMedia.data, safeFilename);
+      messageToSend = new MessageMedia(mimetype || 'application/octet-stream', media, safeFilename);
       if (message) {
         messageToSend.caption = message;
       }
@@ -1327,15 +1245,23 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
     res.json({
       ok: true,
       id: sentMessage.id._serialized,
-      messageId: sentMessage.id._serialized,
       timestamp: sentMessage.timestamp,
       contactName: contactName,
       hasMedia: hasMedia,
       queued: messageQueue.length > 0,
       queuePosition: messageQueue.length
     });
+
+    // Clean up file asynchronously (don't wait)
+    if (uploadedFilePath) {
+      fs.unlink(uploadedFilePath).catch(console.error);
+    }
   } catch (err) {
     console.error('Error sending message to contact:', err);
+    // Clean up file on error
+    if (uploadedFilePath) {
+      fs.unlink(uploadedFilePath).catch(console.error);
+    }
     // Check if error is due to session being closed or the page's script context being broken
     if (isSessionBrokenError(err)) {
       if (!isLoggingOut && !isClientDestroyed) {
@@ -1410,7 +1336,7 @@ app.post('/api/reset-list', async (req, res) => {
           }
         } else if (!chat.isMe) {
           const contactId = chat.id._serialized;
-          if (contactId && (contactId.endsWith('@c.us') || contactId.endsWith('@lid'))) {
+          if (contactId && contactId.endsWith('@c.us')) {
             const userId = chat.id?.user || contactId.split('@')[0] || null;
             contacts.push({
               id: contactId,
@@ -1526,51 +1452,41 @@ app.get('/api/qr-stream', (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
   }
 
-  // A broken pipe (EPIPE/ECONNRESET) is emitted as an 'error' event on the response, NOT thrown, so the
-  // try/catch around res.write cannot see it. Without a listener Node escalates it to an
-  // uncaughtException and the whole process shuts down.
-  let heartbeat = null;
-  const cleanup = () => {
-    if (heartbeat) clearInterval(heartbeat);
-    qrCodeListeners.delete(res);
-  };
-  res.on('error', (err) => {
-    if (err && err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
-      console.warn('SSE stream error:', err.message);
-    }
-    cleanup();
-  });
-  req.on('error', cleanup);
-  req.on('close', () => {
-    cleanup();
-    res.end();
-  });
-
   // Send initial state
   try {
     res.write(`data: ${JSON.stringify({
       qr: currentQRCode,
       hasQR: !!currentQRCode,
-      connected: !!(client && client.info)
+      connected: !!client.info
     })}\n\n`);
   } catch (err) {
     console.error('Error sending initial SSE data:', err);
-    cleanup();
     return res.end();
   }
 
   // Add this response to listeners (using Set for O(1) operations)
   qrCodeListeners.add(res);
 
+  // Remove listener when client disconnects
+  req.on('close', () => {
+    qrCodeListeners.delete(res);
+    res.end();
+  });
+
   // Keep connection alive with heartbeat
-  heartbeat = setInterval(() => {
+  const heartbeat = setInterval(() => {
     try {
       res.write(': heartbeat\n\n');
     } catch (err) {
-      cleanup();
+      clearInterval(heartbeat);
+      qrCodeListeners.delete(res);
       res.end();
     }
   }, 30000); // 30 seconds
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+  });
 });
 
 /**
@@ -1652,7 +1568,7 @@ app.post('/api/logout', async (req, res) => {
           try {
             client = new Client(clientConfig);
             setupClientEvents();
-            initializeClient(client);
+            client.initialize();
           } catch (err) {
             console.error('Error creating new client:', err);
             isLoggingOut = false;
@@ -1707,7 +1623,15 @@ app.post('/api/force-qr', async (req, res) => {
 // SECURITY & OPTIMIZATION MIDDLEWARE
 // ============================================
 
-// NOTE: the request timeout middleware is registered at the top of this file (before the routes).
+// Request timeout middleware (prevent hanging requests)
+app.use((req, res, next) => {
+  req.setTimeout(60000, () => { // 60 second timeout
+    if (!res.headersSent) {
+      res.status(408).json({ ok: false, error: 'Request timeout' });
+    }
+  });
+  next();
+});
 
 // Global error handler (catch-all for unhandled errors)
 app.use((err, req, res, next) => {
@@ -1750,7 +1674,7 @@ function gracefulShutdown(signal) {
       console.log('HTTP server closed.');
 
       // Cleanup WhatsApp client
-      if (client) {
+      if (client && client.info) {
         console.log('Cleaning up WhatsApp client...');
         client.destroy().catch(console.error);
       }
@@ -1779,11 +1703,6 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (err) => {
-  // Network-level noise from a client that went away (e.g. SSE/HTTP socket) is not fatal
-  if (err && (err.code === 'EPIPE' || err.code === 'ECONNRESET' || err.code === 'ERR_STREAM_WRITE_AFTER_END')) {
-    console.warn('Ignored connection error:', err.code);
-    return;
-  }
   console.error('Uncaught Exception:', err);
   gracefulShutdown('uncaughtException');
 });

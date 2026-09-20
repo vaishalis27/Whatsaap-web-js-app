@@ -1,16 +1,7 @@
 diff --git a/node_modules/whatsapp-web.js/src/Client.js b/node_modules/whatsapp-web.js/src/Client.js
-index a2437d1..6cd1468 100644
+index a2437d1..69f675b 100644
 --- a/node_modules/whatsapp-web.js/src/Client.js
 +++ b/node_modules/whatsapp-web.js/src/Client.js
-@@ -729,7 +729,7 @@ class Client extends EventEmitter {
-             window.Store.Msg.on('change:body change:caption', (msg, newBody, prevBody) => { window.onEditMessageEvent(window.WWebJS.getMessageModel(msg), newBody, prevBody); });
-             window.Store.AppState.on('change:state', (_AppState, state) => { window.onAppStateChangedEvent(state); });
-             window.Store.Conn.on('change:battery', (state) => { window.onBatteryStateChangedEvent(state); });
--            window.Store.Call.on('add', (call) => { window.onIncomingCall(call); });
-+            window.Store.Call?.on('add', (call) => { window.onIncomingCall(call); });
-             window.Store.Chat.on('remove', async (chat) => { window.onRemoveChatEvent(await window.WWebJS.getChatModel(chat)); });
-             window.Store.Chat.on('change:archive', async (chat, currState, prevState) => { window.onArchiveChatEvent(await window.WWebJS.getChatModel(chat), currState, prevState); });
-             window.Store.Msg.on('add', (msg) => { 
 @@ -1858,7 +1858,7 @@ class Client extends EventEmitter {
              const channel = await window.WWebJS.getChat(channelId, { getAsModel: false });
              const newOwner = window.Store.Contact.get(newOwnerId) || (await window.Store.Contact.find(newOwnerId));
@@ -33,32 +24,10 @@ index fd4e16a..7398529 100644
              let newId = await window.Store.MsgKey.newId();
              try {
                  await window.Store.GroupUtils.setGroupDescription(chatWid, description, newId, descId);
-diff --git a/node_modules/whatsapp-web.js/src/util/Injected/Store.js b/node_modules/whatsapp-web.js/src/util/Injected/Store.js
-index 6d1a0c8..d5cbe61 100644
---- a/node_modules/whatsapp-web.js/src/util/Injected/Store.js
-+++ b/node_modules/whatsapp-web.js/src/util/Injected/Store.js
-@@ -108,7 +108,7 @@ exports.ExposeStore = () => {
-     window.Store.Settings = {
-         ...window.require('WAWebUserPrefsGeneral'),
-         ...window.require('WAWebUserPrefsNotifications'),
--        setPushname: window.require('WAWebSetPushnameConnAction').setPushname
-+        setPushname: window.require('WAWebSetPushnameConnAction')?.setPushname
-     };
-     window.Store.NumberInfo = {
-         ...window.require('WAPhoneUtils'),
 diff --git a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
-index 54f9caf..5edb86a 100644
+index 54f9caf..9bb56bb 100644
 --- a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
 +++ b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
-@@ -236,7 +236,7 @@ exports.LoadUtils = () => {
-         }
- 
-         const lidUser = window.Store.User.getMaybeMeLidUser();
--        const meUser = window.Store.User.getMaybeMePnUser();
-+        const meUser = window.Store.User.getMaybeMePnUser() || window.Store.User.getMaybeMeUser?.() || window.Store.User.getMeUser?.() || lidUser;
-         const newId = await window.Store.MsgKey.newId();
-         let from = chat.id.isLid() ? lidUser : meUser;
-         let participant;
 @@ -565,14 +565,16 @@ exports.LoadUtils = () => {
  
      window.WWebJS.getChats = async () => {
@@ -132,12 +101,3 @@ index 54f9caf..5edb86a 100644
  
          delete model.msgs;
          delete model.msgUnsyncedButtonReplyMsgs;
-@@ -825,7 +840,7 @@ exports.LoadUtils = () => {
-     };
- 
-     window.WWebJS.rejectCall = async (peerJid, id) => {
--        let userId = window.Store.User.getMaybeMePnUser()._serialized;
-+        let userId = (window.Store.User.getMaybeMePnUser() || window.Store.User.getMaybeMeUser?.() || window.Store.User.getMeUser?.())._serialized;
- 
-         const stanza = window.Store.SocketWap.wap('call', {
-             id: window.Store.SocketWap.generateId(),

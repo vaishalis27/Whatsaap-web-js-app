@@ -6,7 +6,6 @@
   "scripts": {
     "start": "node --no-deprecation server.js",
     "dev": "node --no-deprecation server.js",
-    "test": "node --test test/*.test.js",
     "postinstall": "patch-package"
   },
   "keywords": [
