@@ -99,6 +99,7 @@ class Client extends EventEmitter {
     if (String(to).includes('broken')) {
       throw new Error('Session closed. Most likely the page has been closed.');
     }
+    if (String(to).includes('ghost')) return undefined; // library returns nothing when it cannot resolve the chat
     return { id: { _serialized: `true_${to}_MOCKID` }, timestamp: 1700000000 };
   }
 

@@ -358,3 +358,17 @@ test('queued messages fail cleanly (CLIENT_NOT_READY) when the session never com
   assert.equal(status.data.antiDetection.queueLength, 0);
   assert.equal(status.data.antiDetection.isProcessing, false);
 });
+
+test('library returning no message gives a clear error instead of a TypeError about undefined', async (t) => {
+  const server = await startServer();
+  t.after(() => server.stop());
+
+  const r = await server.request('/send-contact', { method: 'POST', json: { contactId: 'ghost@lid', message: 'x' } });
+  assert.equal(r.status, 500);
+  assert.match(r.data.error, /did not confirm the message/);
+  assert.doesNotMatch(r.data.error, /Cannot read properties/);
+
+  // the service keeps working afterwards
+  const ok = await server.request('/send-contact', { method: 'POST', json: { contactId: '919876543210@c.us', message: 'still fine' } });
+  assert.equal(ok.status, 200, ok.text);
+});

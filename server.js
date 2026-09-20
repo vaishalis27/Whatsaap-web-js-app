@@ -1159,11 +1159,18 @@ app.post('/send-group', handleFileUpload, async (req, res) => {
       throw queueError;
     }
 
+    // The library returns nothing when the chat cannot be found. Say so clearly instead of crashing with
+    // "Cannot read properties of undefined (reading 'id')".
+    if (!sentMessage) {
+      throw new Error('WhatsApp did not confirm the message (chat not found or number not on WhatsApp)');
+    }
+    const sentId = sentMessage.id && sentMessage.id._serialized ? sentMessage.id._serialized : null;
+
     // Send response
     res.json({
       ok: true,
-      id: sentMessage.id._serialized,
-      messageId: sentMessage.id._serialized,
+      id: sentId,
+      messageId: sentId,
       timestamp: sentMessage.timestamp,
       groupName: groupName,
       hasMedia: hasMedia,
@@ -1323,11 +1330,18 @@ app.post('/send-contact', handleFileUpload, async (req, res) => {
       throw queueError;
     }
 
+    // The library returns nothing when the chat cannot be found. Say so clearly instead of crashing with
+    // "Cannot read properties of undefined (reading 'id')".
+    if (!sentMessage) {
+      throw new Error('WhatsApp did not confirm the message (chat not found or number not on WhatsApp)');
+    }
+    const sentId = sentMessage.id && sentMessage.id._serialized ? sentMessage.id._serialized : null;
+
     // Send response
     res.json({
       ok: true,
-      id: sentMessage.id._serialized,
-      messageId: sentMessage.id._serialized,
+      id: sentId,
+      messageId: sentId,
       timestamp: sentMessage.timestamp,
       contactName: contactName,
       hasMedia: hasMedia,

@@ -47,7 +47,7 @@ index 6d1a0c8..d5cbe61 100644
      window.Store.NumberInfo = {
          ...window.require('WAPhoneUtils'),
 diff --git a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
-index 54f9caf..f58002b 100644
+index 54f9caf..fe78686 100644
 --- a/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
 +++ b/node_modules/whatsapp-web.js/src/util/Injected/Utils.js
 @@ -236,7 +236,7 @@ exports.LoadUtils = () => {
@@ -71,7 +71,37 @@ index 54f9caf..f58002b 100644
          // Bot's won't reply if canonicalUrl is set (linking)
          if (botOptions) {
              delete message.canonicalUrl;
-@@ -565,14 +570,16 @@ exports.LoadUtils = () => {
+@@ -321,11 +326,14 @@ exports.LoadUtils = () => {
+         }
+ 
+         const [msgPromise, sendMsgResultPromise] = window.Store.SendMessage.addAndSendMsgToChat(chat, message);
+-        await msgPromise;
++        const addedMsg = await msgPromise;
+ 
+         if (options.waitUntilMsgSent) await sendMsgResultPromise;
+ 
+-        return window.Store.Msg.get(newMsgKey._serialized);
++        // Message keys no longer expose `_serialized` in newer WhatsApp Web; String(key) is the same
++        // "<fromMe>_<chat>_<id>" form. Without this the lookup was Msg.get(undefined), so a message that WAS sent
++        // was reported as "nothing returned" and callers crashed reading `.id` of undefined.
++        return window.Store.Msg.get(newMsgKey._serialized || String(newMsgKey)) || (addedMsg && typeof addedMsg.serialize === 'function' ? addedMsg : undefined);
+     };
+ 	
+     window.WWebJS.editMessage = async (msg, content, options = {}) => {
+@@ -505,6 +513,12 @@ exports.LoadUtils = () => {
+             msg.id = Object.assign({}, msg.id, { remote: msg.id.remote._serialized });
+         }
+ 
++        // Newer WhatsApp Web message keys have no `_serialized`, but the rest of the library (and API callers)
++        // read `message.id._serialized`. String(key) yields the same "<fromMe>_<chat>_<id>" value.
++        if (msg.id && typeof msg.id === 'object' && msg.id._serialized === undefined) {
++            msg.id = Object.assign({}, msg.id, { _serialized: String(message.id) });
++        }
++
+         delete msg.pendingAckUpdate;
+ 
+         return msg;
+@@ -565,14 +579,16 @@ exports.LoadUtils = () => {
  
      window.WWebJS.getChats = async () => {
          const chats = window.Store.Chat.getModelsArray();
@@ -92,7 +122,7 @@ index 54f9caf..f58002b 100644
      };
  
      window.WWebJS.getChatModel = async (chat, { isChannel = false } = {}) => {
-@@ -590,27 +597,40 @@ exports.LoadUtils = () => {
+@@ -590,27 +606,40 @@ exports.LoadUtils = () => {
          if (chat.groupMetadata) {
              model.isGroup = true;
              const chatWid = window.Store.WidFactory.createWid(chat.id._serialized);
@@ -144,7 +174,7 @@ index 54f9caf..f58002b 100644
  
          delete model.msgs;
          delete model.msgUnsyncedButtonReplyMsgs;
-@@ -825,7 +845,7 @@ exports.LoadUtils = () => {
+@@ -825,7 +854,7 @@ exports.LoadUtils = () => {
      };
  
      window.WWebJS.rejectCall = async (peerJid, id) => {

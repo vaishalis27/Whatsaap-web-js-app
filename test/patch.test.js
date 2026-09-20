@@ -219,3 +219,56 @@ test('media messages: the media object\'s __x_id must not shadow the message key
   const unfixed = await run(patchedSource.replace('delete message.__x_id;', ''));
   assert.equal('__x_id' in unfixed, true, 'without the fix the media __x_id leaks into the message (the bug)');
 });
+
+// ---------------------------------------------------------------------------------------------
+// Message keys in newer WhatsApp Web have no `_serialized` (only toString()). The library looked the sent
+// message up with Msg.get(key._serialized) = Msg.get(undefined), so a message that WAS sent came back as
+// "undefined" and callers crashed with "Cannot read properties of undefined (reading 'id')".
+// ---------------------------------------------------------------------------------------------
+function loadUtilsWithKeyStyle(source, { sentMsgs }) {
+  class MsgKey {
+    constructor(o) { Object.assign(this, o); }            // NOTE: no _serialized, like current WhatsApp Web
+    toString() { return 'true_chat@c.us_' + this.id; }
+    static async newId() { return 'ABC123'; }
+  }
+  const window = {
+    Store: {
+      User: { getMaybeMeLidUser: () => 'ME_LID', getMaybeMePnUser: () => 'ME_PN' },
+      ChatGetters: { getIsNewsletter: () => false },
+      MsgKey,
+      WidFactory: { asUserWidOrThrow: (x) => x },
+      EphemeralFields: { getEphemeralFields: () => ({}) },
+      SendMessage: { addAndSendMsgToChat: () => [Promise.resolve(undefined), Promise.resolve()] },
+      Msg: { get: (key) => sentMsgs.get(key) },
+      Validators: { findLinks: () => [] },
+    },
+  };
+  const exportsObj = {};
+  new Function('exports', 'window', source)(exportsObj, window);
+  exportsObj.LoadUtils();
+  return window;
+}
+
+test('sendMessage finds the sent message even though the key has no _serialized (patch applied)', async () => {
+  assert.ok(fs.readFileSync(PATCH, 'utf8').includes('String(newMsgKey)'), 'recorded in the patch file');
+  const sentMsg = { serialize: () => ({}) };
+  const sentMsgs = new Map([['true_chat@c.us_ABC123', sentMsg]]);
+
+  const fixed = loadUtilsWithKeyStyle(patchedSource, { sentMsgs });
+  assert.equal(await fixed.WWebJS.sendMessage(chatOf(), 'hi', {}), sentMsg);
+
+  const unfixed = loadUtilsWithKeyStyle(patchedSource.replace('newMsgKey._serialized || String(newMsgKey)', 'newMsgKey._serialized'), { sentMsgs });
+  assert.equal(await unfixed.WWebJS.sendMessage(chatOf(), 'hi', {}), undefined, 'without the fix the sent message is reported as missing');
+});
+
+test('getMessageModel adds id._serialized when the key does not have it (patch applied)', () => {
+  const build = (source) => {
+    const w = loadUtilsWithKeyStyle(source, { sentMsgs: new Map() });
+    const key = { fromMe: true, remote: 'chat@c.us', id: 'ABC123', toString: () => 'true_chat@c.us_ABC123' };
+    const message = { id: key, isEphemeral: false, isStatusV3: false, body: 'x', serialize: () => ({ id: { fromMe: true, remote: 'chat@c.us', id: 'ABC123' } }) };
+    return w.WWebJS.getMessageModel(message);
+  };
+  assert.equal(build(patchedSource).id._serialized, 'true_chat@c.us_ABC123');
+  const unfixed = build(patchedSource.replace('msg.id._serialized === undefined', 'false'));
+  assert.equal(unfixed.id._serialized, undefined, 'without the fix API callers get an undefined message id');
+});
