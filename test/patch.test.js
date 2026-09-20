@@ -177,3 +177,45 @@ test('attachEventListeners: WITHOUT the fix it throws when Store.Call is missing
   await assert.rejects(runWith((fn) => new Function('return (' + fn.toString().replace('window.Store.Call?.on(', 'window.Store.Call.on(') + ')')()),
     /Cannot read properties of undefined \(reading 'on'\)/);
 });
+
+// ---------------------------------------------------------------------------------------------
+// Media messages (every WhatsApp slip is an image): the processed media object carries its own
+// `__x_id`, which shadowed the message key and made WhatsApp throw
+// "Data passed to getter must include an id property (it's how we memoize) but got undefined".
+// ---------------------------------------------------------------------------------------------
+test('media messages: the media object\'s __x_id must not shadow the message key (patch applied)', async () => {
+  const patchFile = fs.readFileSync(PATCH, 'utf8');
+  assert.ok(patchFile.includes('delete message.__x_id;'), 'recorded in the patch file (survives npm install)');
+  assert.ok(patchedSource.includes('delete message.__x_id;'));
+
+  const run = async (source) => {
+    let sent = null;
+    class MsgKey { constructor(o) { Object.assign(this, o); this._serialized = 'KEY'; } static async newId() { return 'NEWID'; } }
+    const mediaObject = { toJSON: () => ({ type: 'image', __x_id: { fake: 'media id' } }), __x_id: { fake: 'media id' }, preview: 'p' };
+    const window = {
+      Store: {
+        User: { getMaybeMeLidUser: () => 'ME_LID', getMaybeMePnUser: () => 'ME_PN' },
+        ChatGetters: { getIsNewsletter: () => false },
+        MsgKey,
+        WidFactory: { asUserWidOrThrow: (x) => x },
+        EphemeralFields: { getEphemeralFields: () => ({}) },
+        SendMessage: { addAndSendMsgToChat: (chat, message) => { sent = message; return [Promise.resolve(), Promise.resolve()]; } },
+        Msg: { get: () => ({}) },
+      },
+    };
+    const exportsObj = {};
+    new Function('exports', 'window', source)(exportsObj, window);
+    exportsObj.LoadUtils();
+    window.WWebJS.processMediaData = async () => mediaObject;
+    await window.WWebJS.sendMessage(chatOf({ lid: false }), '', { caption: 'x', media: { mimetype: 'image/png', data: 'AAAA', filename: 'a.png' } });
+    return sent;
+  };
+
+  const fixed = await run(patchedSource);
+  assert.ok(fixed.id instanceof Object && fixed.id._serialized === 'KEY', 'message id is still our message key');
+  assert.equal('__x_id' in fixed, false, 'media __x_id removed');
+  assert.equal(fixed.type, 'image', 'media fields are still applied');
+
+  const unfixed = await run(patchedSource.replace('delete message.__x_id;', ''));
+  assert.equal('__x_id' in unfixed, true, 'without the fix the media __x_id leaks into the message (the bug)');
+});
